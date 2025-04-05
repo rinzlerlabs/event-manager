@@ -1,0 +1,116 @@
+{
+    "mode": "active",
+    "mode_override": {
+        "mode": "inactive",
+        "until": "2024-11-18T19:05:05Z"
+    },
+    "app_api_key": "daifdkaddkdfhshfeasw",
+    "app_api_key_id": "weygwegqeyygadydagfd",
+    "email_module": "shared-alerting:email",
+    "sms_module": "shared-alerting:sms",
+    "resources": {
+        "kasa_plug_1": {"type": "component", "subtype": "generic"},
+        "kasa_plug_2": {"type": "component", "subtype": "generic"},
+        "cam1": {"type": "component", "subtype": "camera"},
+        "vcam1": {"type": "component", "subtype": "camera"},
+        "tracker1": {"type": "service", "subtype": "vision"},
+        "person_detector": {"type": "service", "subtype": "vision"},
+        "stuff_sensor": {"type": "component", "subtype": "sensor"}
+    },
+    "events": [
+        {
+            "name": "more than 3 results",
+            "modes": ["active"],
+            "pause_alerting_on_event_secs": 300,
+            "detection_hz": 1,
+            "trigger_sequence_count": 2,
+            "rule_logic_type": "AND",
+            "rules": [
+                {
+                    "type": "call",
+                    "resource": "stuff_sensor",
+                    "method": "get_readings",
+                    "result_path": "big.good",
+                    "result_function": "len",
+                    "result_operator": "gt",
+                    "result_value": 3,
+                    "inverse_pause_secs": 900
+                }
+            ], 
+            "notifications": [
+                    {"type": "email", "to": ["test@somedomain.com"], "preset": "alert"}
+                ]
+        },
+        {
+            "name": "a person camera 1",
+            "modes": ["active"],
+            "pause_alerting_on_event_secs": 300,
+            "detection_hz": 5,
+            "trigger_sequence_count": 2,
+            "rule_logic_type": "AND",
+            "rules": [
+                {
+                    "type": "detection",
+                    "confidence_pct": 0.6,
+                    "class_regex": "Person",                    
+                    "camera": "cam1",
+                    "detector": "person_detector"
+                }
+            ], 
+            "notifications": [
+                    {"type": "sms", "to": ["123-456-7890"], "preset": "alert"},
+                    {"type": "email", "to": ["test@somedomain.com"], "preset": "alert"}
+                ],
+            "actions": [
+                {   
+                    "when_secs": 0, 
+                    "resource": "kasa_plug_1",
+                    "method": "do_command",
+                    "payload": "{'action' : 'toggle_on'}"
+                }
+            ]
+        },
+        {
+            "name": "a new person camera 2",
+            "modes": ["active"],
+            "capture_video" : true,
+            "video_capture_resource": "vcam1",
+            "event_video_capture_padding_secs": 10,
+            "detection_hz": 2,
+            "pause_alerting_on_event_secs": 120,
+            "rule_logic_type": "AND",
+            "rules": [
+                {
+                    "type": "tracker",
+                    "camera": "cam1",
+                    "tracker": "cam1",
+                    "pause_on_known_secs": 900
+                }
+            ], 
+            "notifications": [{"type": "sms", "to": ["test@somedomain.com"], "include_image": false, "preset": "alert"}],
+            "actions": [
+                {   
+                    "response_match": "1",
+                    "when_secs": 60, 
+                    "resource": "kasa_plug_2",
+                    "method": "do_command",
+                    "payload": "{'action' : 'toggle_on'}"
+                },
+                {   
+                    "response_match": "(2|3)",
+                    "when_secs": -1, 
+                    "resource": "kasa_plug_2",
+                    "method": "do_command",
+                    "payload": "{'action' : 'toggle_off'}"
+                },
+                {   
+                    "response_match": "2",
+                    "when_secs": -1, 
+                    "resource": "vcam1",
+                    "method": "do_command",
+                    "payload": "{'relabel' : {'<<triggered_label>>': 'Known person'}}"
+                }
+            ]
+        }
+    ]
+}

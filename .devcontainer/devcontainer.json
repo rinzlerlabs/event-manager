@@ -1,0 +1,21 @@
+{
+    "name": "Python 3.10",
+    "image": "mcr.microsoft.com/devcontainers/python:3.10-bookworm",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "ms-python.isort",
+                "ms-python.autopep8"
+            ]
+        }
+    },
+    "mounts": [
+      "source=${localWorkspaceFolder},target=/workspace,type=bind",
+      "source=${env:HOME}/.viam,target=/home/user/.viam,type=bind"
+    ],
+    "postCreateCommand": "pip install -r requirements.txt",
+    "remoteUser": "vscode",
+    "updateRemoteUserUID": true,
+    "workspaceFolder": "/workspace"
+  }

@@ -1,27 +1,32 @@
 import json
-from typing import cast
+from typing import cast, Mapping
 
+from viam.resource.base import ResourceBase
 from viam.components.generic import Generic as GenericComponent
 from viam.services.generic import Generic as GenericService
 from viam.services.vision import VisionClient
 from viam.components.sensor import Sensor
 
+from src.config import Resource
 
-async def call_method(resources, name, method, payload, event):
+
+async def call_method(resources:Mapping[str, Resource], name:str, method:str, payload, event):
     # certainly this could be improved
-    if (resources["resources"][name]["type"] == "component") and (resources["resources"][name]["subtype"] == "generic"):
+    if (resources[name].Type == "component") and (resources[name].SubType == "generic"):
         resource_dep = resources['_deps'][GenericComponent.get_resource_name(name)]
         resource = cast(GenericComponent, resource_dep)
-    if (resources["resources"][name]["type"] == "component") and (resources["resources"][name]["subtype"] == "sensor"):
+    elif (resources[name].Type == "component") and (resources[name].SubType == "sensor"):
         resource_dep = resources['_deps'][Sensor.get_resource_name(name)]
         resource = cast(Sensor, resource_dep)
-    if (resources["resources"][name]["type"] == "service") and (resources["resources"][name]["subtype"] == "generic"):
+    elif (resources[name].Type == "service") and (resources[name].SubType == "generic"):
         resource_dep = resources['_deps'][GenericService.get_resource_name(name)]
         resource = cast(GenericService, resource_dep)
-    if (resources["resources"][name]["type"] == "service") and (resources["resources"][name]["subtype"] == "vision"):
+    elif (resources[name].Type == "service") and (resources[name].SubType == "vision"):
         resource_dep = resources['_deps'][VisionClient.get_resource_name(name)]
         resource = cast(VisionClient, resource_dep)
-
+    else:
+        raise Exception(f"Resource {name} not found in resources")
+    
     method = getattr(resource, method)
 
     if payload:

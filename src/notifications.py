@@ -3,7 +3,7 @@ import base64
 from io import BytesIO
 from datetime import datetime, timezone
 from . import events
-from .notificationClass import NotificationEmail, NotificationSMS, NotificationWebhookGET
+from .notification_class import NotificationEmail, NotificationSMS, NotificationWebhookGET
 from .globals import getParam
 
 

@@ -1,15 +1,31 @@
 import re
 import asyncio
+from enum import Enum
 
 from datetime import datetime
-from typing import cast
+from typing import cast, Any, Mapping
 from PIL import Image
 from . import logic
-from .resourceUtils import call_method
+from .resource_utils import call_method
 from .globals import getParam
 from viam.services.vision import VisionClient, Detection, Classification, Vision
 from viam.media.utils.pil import viam_to_pil_image
+from src.config import Resource
+from viam.proto.common import ResourceName
+from viam.resource.base import ResourceBase
 
+class RuleType(str, Enum):
+    detection = "detection"
+    classification = "classification"
+    time = "time"
+    tracker = "tracker"
+    call = "call"
+
+class Rule():
+    type: RuleType
+
+    def __init__(self, rule_type: RuleType):
+        self.type = rule_type
 
 class TimeRange():
     start_hour: int
@@ -19,8 +35,7 @@ class TimeRange():
         for key, value in kwargs.items():
             self.__dict__[key] = value
 
-class RuleDetector():
-    type: str="detection"
+class RuleDetector(Rule):
     camera: str
     detector: str
     class_regex: str
@@ -28,10 +43,11 @@ class RuleDetector():
     inverse_pause_secs: int
 
     def __init__(self, **kwargs):
+        super().__init__(RuleType.detection)
         for key, value in kwargs.items():
             self.__dict__[key] = value
-class RuleClassifier():
-    type: str="classification"
+
+class RuleClassifier(Rule):
     camera: str
     classifier: str
     class_regex: str
@@ -39,22 +55,22 @@ class RuleClassifier():
     inverse_pause_secs: int
 
     def __init__(self, **kwargs):
+        super().__init__(RuleType.classification)
         for key, value in kwargs.items():
             self.__dict__[key] = value
 
-class RuleTracker():
-    type: str="tracker"
+class RuleTracker(Rule):
     camera: str
     tracker: str
     inverse_pause_secs: int
     pause_on_known_secs: int
 
     def __init__(self, **kwargs):
+        super().__init__(RuleType.tracker)
         for key, value in kwargs.items():
             self.__dict__[key] = value
 
-class RuleCall():
-    type: str="call"
+class RuleCall(Rule):
     resource: str
     method: str
     payload:str = ""
@@ -65,12 +81,14 @@ class RuleCall():
     inverse_pause_secs: int
 
     def __init__(self, **kwargs):
+        super().__init__(RuleType.call)
         for key, value in kwargs.items():
             self.__dict__[key] = value
-class RuleTime():
-    type: str="time"
+
+class RuleTime(Rule):
     ranges: list[TimeRange]
     def __init__(self, **kwargs):
+        super().__init__(RuleType.time)
         for key, value in kwargs.items():
             if isinstance(value, list):
                 self.__dict__[key] = []
@@ -79,18 +97,23 @@ class RuleTime():
             else:
                 self.__dict__[key] = value
 
-async def eval_rule(rule:RuleTime|RuleDetector|RuleClassifier|RuleTracker|RuleCall, resources):
-    response = { "triggered" : False }
+async def eval_rule(rule:RuleTime|RuleDetector|RuleClassifier|RuleTracker|RuleCall, resources: Mapping[ResourceName, ResourceBase]) -> dict[str, Any]:
+    response:dict[str, Any] = { "triggered" : False }
     match rule.type:
-        case "time":
+        case RuleType.time:
+            rule = cast(RuleTime, rule)
             curr_time = datetime.now()
             for r in rule.ranges:
                 if (curr_time.hour >= r.start_hour) and (curr_time.hour < r.end_hour):
                     getParam('logger').debug("Time triggered")
                     response["triggered"] = True   
-        case "detection":
+        case RuleType.detection:
+            rule = cast(RuleDetector, rule)
             detector = _get_vision_service(rule.detector, resources)
             all = await detector.capture_all_from_camera(rule.camera, return_detections=True, return_image=True)
+            if all is None or all.detections is None or all.image is None:
+                getParam('logger').error(f"Error: no image returned from {rule.camera}")
+                return response
             d: Detection
             for d in all.detections:
                 if (d.confidence >= rule.confidence_pct) and re.search(rule.class_regex, d.class_name):
@@ -99,9 +122,15 @@ async def eval_rule(rule:RuleTime|RuleDetector|RuleClassifier|RuleTracker|RuleCa
                     response["image"] = viam_to_pil_image(all.image)
                     response["value"] = d.class_name
                     response["resource"] = rule.camera
-        case "classification":
+        case RuleType.classification:
+            rule = cast(RuleClassifier, rule)
             classifier = _get_vision_service(rule.classifier, resources)
             all = await classifier.capture_all_from_camera(rule.camera, return_classifications=True, return_image=True)
+
+            if all is None or all.classifications is None or all.image is None:
+                getParam('logger').error(f"Error: no image returned from {rule.camera}")
+                return response
+            
             c: Classification
             for c in all.classifications:
                 if (c.confidence >= rule.confidence_pct) and re.search(rule.class_regex, c.class_name):
@@ -110,10 +139,16 @@ async def eval_rule(rule:RuleTime|RuleDetector|RuleClassifier|RuleTracker|RuleCa
                     response["image"] = viam_to_pil_image(all.image)
                     response["value"] = c.class_name
                     response["resource"] = rule.camera
-        case "tracker":
+        case RuleType.tracker:
+            rule = cast(RuleTracker, rule)
             tracker = _get_vision_service(rule.tracker, resources)
             # NOTE: we call capture_all_from_camera() in order to get an image and coordinates in case there is an actionable detection
             all = await tracker.capture_all_from_camera(rule.camera, return_classifications=False, return_detections=True, return_image=True)
+
+            if all is None or all.detections is None or all.image is None:
+                getParam('logger').error(f"Error: no image returned from {rule.camera}")
+                return response
+            
             approved_status = []
 
             current = await tracker.do_command({"list_current": True})
@@ -143,7 +178,8 @@ async def eval_rule(rule:RuleTime|RuleDetector|RuleClassifier|RuleTracker|RuleCa
                 getParam('logger').info(response)
 
                 response["triggered"] = True
-        case "call":
+        case RuleType.call:
+            rule = cast(RuleCall, rule)
             try:
                 call_res = await call_method(resources, rule.resource, rule.method, rule.payload, None)
                 if rule.result_path:

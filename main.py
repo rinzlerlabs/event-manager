@@ -6,7 +6,7 @@ from viam.module.module import Module
 from viam.components.sensor import Sensor
 from viam.resource.registry import Registry, ResourceCreatorRegistration
 
-from src.eventManager import eventManager
+from src.event_manager import eventManager
 
 async def main():
     """This function creates and starts a new module, after adding all desired resources.

@@ -3,8 +3,8 @@ import time
 
 from .globals import getParam
 from .events import Event
-from .actionClass import Action
-from .resourceUtils import call_method
+from .action_class import Action
+from .resource_utils import call_method
 
 def flip_action_status(event:Event, direction:bool):
     action:Action

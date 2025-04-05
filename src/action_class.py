@@ -5,7 +5,7 @@ class Action():
     when_secs: int
     response_match: str = ""
     taken: bool = False
-    last_taken: int
+    last_taken: float
     def __init__(self, **kwargs):
         for key, value in kwargs.items():
             self.__dict__[key] = value

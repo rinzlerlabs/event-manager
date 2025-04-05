@@ -1,10 +1,28 @@
-from .notificationClass import NotificationEmail, NotificationSMS, NotificationWebhookGET
-from .rules import RuleClassifier, RuleDetector, RuleTracker,RuleTime, RuleCall
-from .actionClass import Action
+from enum import Enum
+from typing import Mapping
+
+from viam.proto.common import ResourceName
+from viam.resource.base import ResourceBase
+
+from src.config import Resource
+
+from .action_class import Action
+from .notification_class import (NotificationEmail, NotificationSMS,
+                                 NotificationWebhookGET)
+from .rules import (RuleCall, RuleClassifier, RuleDetector, RuleTime,
+                    RuleTracker)
+
+
+class EventState(str, Enum):
+    setup = "setup"
+    monitoring = "monitoring"
+    paused = "paused"
+    triggered = "triggered"
+    actioning = "actioning"
 
 class Event():
     name: str
-    state: str = 'paused'
+    state: EventState = EventState.paused
     capture_video: bool = False
     video_capture_resource: str
     event_video_capture_padding_secs: int = 10

@@ -4,7 +4,7 @@ from io import BytesIO
 from datetime import datetime, timezone
 from . import events
 from .notification_class import NotificationEmail, NotificationSMS, NotificationWebhookGET
-from .globals import getParam
+from .logger import LOGGER
 
 
 async def notify(event:events.Event, notification:NotificationEmail|NotificationSMS|NotificationWebhookGET, resources):
@@ -29,7 +29,7 @@ async def notify(event:events.Event, notification:NotificationEmail|Notification
                 if notification.include_image:
                     notification_args["template_vars"]["image_base64"] = img_base64_str
             else:
-                getParam('logger').warning("No email module defined, can't send notification email")
+                LOGGER.warning("No email module defined, can't send notification email")
                 return
         case "sms":
             if "sms_module" in resources:
@@ -38,7 +38,7 @@ async def notify(event:events.Event, notification:NotificationEmail|Notification
                     notification_args["media_base64"] = img_base64_str
                     notification_args["media_mime_type"] =  "image/jpeg"
             else:
-                getParam('logger').warning("No SMS module defined, can't send notification SMS")
+                LOGGER.warning("No SMS module defined, can't send notification SMS")
                 return
         case "webhook_get":
             contents = urllib.request.urlopen(notification.url).read()
@@ -54,9 +54,9 @@ async def notify(event:events.Event, notification:NotificationEmail|Notification
     try:
         res = await notification_resource.do_command(notification_args)
         if "error" in res:
-            getParam('logger').error(f"Error sending {notification.type}: {res['error']}")
+            LOGGER.error(f"Error sending {notification.type}: {res['error']}")
     except Exception as e:
-        getParam('logger').error(f'Unexpected error, notification not sent {e}')
+        LOGGER.error(f'Unexpected error, notification not sent {e}')
         
     return   
 
@@ -65,9 +65,9 @@ async def check_sms_response(notifications:list[NotificationEmail|NotificationSM
     for n in notifications:
         if n.type == "sms":
             sms_args = { "command": "get", "number": 1, "from": n.to, "time_start": formatted_time }
-            getParam('logger').debug(sms_args)
+            LOGGER.debug(sms_args)
             res = await resources['sms_module'].do_command(sms_args)
             if len(res["messages"]):
-                getParam('logger').debug(res)
+                LOGGER.debug(res)
                 return res["messages"][0]["body"]
     return ""

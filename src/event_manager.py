@@ -18,7 +18,7 @@ from viam.utils import ValueTypes, struct_to_dict
 from viam.app.viam_client import ViamClient
 from viam.rpc.dial import DialOptions
 
-from . import events, rules, notifications, triggered, actions, globals
+from . import events, rules, notifications, triggered, actions
 
 import time
 import copy
@@ -28,8 +28,8 @@ import re
 import pydot
 import traceback
 from enum import Enum
-from src.config import Modes, Config
-
+from .config import Modes, Config
+from .logger import LOGGER
 
 class eventManager(Sensor, Reconfigurable):
     MODEL: ClassVar[Model] = Model(
@@ -37,14 +37,6 @@ class eventManager(Sensor, Reconfigurable):
 
     config: Config
     name: str
-    mode: Modes = Modes.inactive
-    mode_overridden: Modes = Modes.none
-    mode_override_until: float | None
-    app_client: ViamClient | None
-    api_key_id: str
-    api_key: str
-    part_id: str
-    robot_resources = {}
     dm_sent_status = {}
     event_states: list[events.Event] = []
     stop_events = []
@@ -64,8 +56,11 @@ class eventManager(Sensor, Reconfigurable):
         attributes = struct_to_dict(config.attributes)
 
         resources = attributes.get("resources")
-        for r in resources.keys():
-            deps.append(r)
+        if resources is not None:
+            if not isinstance(resources, (dict, Mapping)):
+                raise TypeError("expected resources to be a dictionary")
+            for r in resources.keys():
+                deps.append(r)
         sms_module = config.attributes.fields["sms_module"].string_value or ""
         if sms_module != "":
             deps.append(sms_module)
@@ -81,43 +76,7 @@ class eventManager(Sensor, Reconfigurable):
         # reset event states
         self.event_states = []
 
-        attributes = struct_to_dict(config.attributes)
         self.config = Config(config, dependencies)
-
-        mode = "inactive"
-        if attributes.get("mode"):
-            mode = attributes.get("mode")
-
-        if attributes.get("mode_override"):
-            until = iso8601_to_timestamp(attributes["mode_override"]["until"])
-            self.mode_override_until = until
-            self.mode_overridden = mode
-            mode = attributes["mode_override"]["mode"]
-        self.mode = mode
-
-        if attributes.get('event_video_capture_padding_secs'):
-            self.event_video_capture_padding_secs = attributes.get(
-                'event_video_capture_padding_secs')
-
-        dict_events = attributes.get("events")
-        if dict_events is not None:
-            for e in dict_events:
-                event = events.Event(**e)
-                event.state = events.EventState.setup
-                self.event_states.append(event)
-
-        self.deps = dependencies
-        self.robot_resources['resources'] = attributes.get("resources")
-
-        sms_module = config.attributes.fields["sms_module"].string_value or ""
-        if sms_module != "":
-            self.robot_resources['sms_module_name'] = sms_module
-        email_module = config.attributes.fields["email_module"].string_value or ""
-        if email_module != "":
-            self.robot_resources['email_module_name'] = email_module
-
-        self.api_key = config.attributes.fields["app_api_key"].string_value or ''
-        self.api_key_id = config.attributes.fields["app_api_key_id"].string_value or ''
 
         while self.stop_events:
             stop_event = self.stop_events.pop()
@@ -127,16 +86,19 @@ class eventManager(Sensor, Reconfigurable):
         return
 
     async def viam_connect(self) -> ViamClient:
+        if self.config.app_api_key == '' or self.config.app_api_key is None \
+            or self.config.app_api_key_id == '' or self.config.app_api_key_id is None:
+            raise ValueError("App API Key and App API Key ID are required for cloud connection.")
         dial_options = DialOptions.with_api_key(
-            api_key=self.api_key,
-            api_key_id=self.api_key_id
+            api_key=self.config.app_api_key,
+            api_key_id=self.config.app_api_key_id
         )
         return await ViamClient.create_from_dial_options(dial_options)
 
     async def manage_events(self):
         self.logger.info("Starting event manager")
 
-        if (self.api_key != '' and self.api_key_id != ''):
+        if (self.config.app_api_key != '' and self.config.app_api_key_id != ''):
             self.app_client = await self.viam_connect()
 
         event: events.Event
@@ -146,26 +108,16 @@ class eventManager(Sensor, Reconfigurable):
             asyncio.create_task(self.event_check_loop(event, stop_event))
 
     async def event_check_loop(self, event: events.Event, stop_event):
-        # make the resource logger available globally
-        globals.setParam('logger', self.logger)
-
         # copy so we don't cause locking issue by referencing the same resource across event tasks
-        event_resources = copy.deepcopy(self.robot_resources)
-        event_resources['_deps'] = self.deps
-
-        if event_resources["sms_module_name"] != "":
-            actual = event_resources['_deps'][GenericService.get_resource_name(
-                event_resources["sms_module_name"])]
-            event_resources['sms_module'] = cast(GenericService, actual)
-        if event_resources["email_module_name"] != "":
-            actual = event_resources['_deps'][GenericService.get_resource_name(
-                event_resources["email_module_name"])]
-            event_resources['email_module'] = cast(GenericService, actual)
+        # Since the resources are now stored differently in the config, i've disabled this for now
+        # i'm not convinced there will be contention, unless the dependencies Map given to `new` 
+        # or `reconfigure` is somehow creating a new client each time we call for a resource
+        # event_resources = copy.deepcopy(self.config.resources)
 
         self.logger.info("Starting event check loop for " + event.name)
         while not stop_event.is_set():
             try:
-                if ((self.mode in event.modes) and ((event.is_triggered == False) or ((event.is_triggered == True) and ((time.time() - event.last_triggered) >= event.pause_alerting_on_event_secs)))):
+                if ((self.config.mode in event.modes) and ((event.is_triggered == False) or ((event.is_triggered == True) and ((time.time() - event.last_triggered) >= event.pause_alerting_on_event_secs)))):
                     start_time = datetime.now()
                     event.state = events.EventState.monitoring
 
@@ -183,7 +135,7 @@ class eventManager(Sensor, Reconfigurable):
                     rule_results = []
                     for rule in event.rules:
                         self.logger.debug(rule)
-                        result = await rules.eval_rule(rule, event_resources)
+                        result = await rules.eval_rule(rule)
                         if result["triggered"] == True:
                             event.sequence_count_current = event.sequence_count_current + 1
                         else:
@@ -198,20 +150,25 @@ class eventManager(Sensor, Reconfigurable):
 
                         # rule settings can determine if the event loop should be paused on
                         # non-triggered events
-                        if hasattr(rule, 'inverse_pause_secs') and rule.inverse_pause_secs > 0 and not result["triggered"]:
-                            event.paused_until = time.time() + rule.inverse_pause_secs
-                            event.state = events.EventState.paused
-                            event.pause_reason = f"{rule.type} rule inverse pause for {rule.inverse_pause_secs} secs"
-                            break
-                        if hasattr(rule, 'pause_on_known_secs') and rule.pause_on_known_secs > 0 and "known_person_seen" in result and result["known_person_seen"]:
-                            event.paused_until = time.time() + rule.pause_on_known_secs
-                            event.state = events.EventState.paused
-                            event.pause_reason = "known person"
-                            break
+                        if isinstance(rule, rules.RuleDetector) or \
+                            isinstance(rule, rules.RuleClassifier) or \
+                                isinstance(rule, rules.RuleTracker) or \
+                                    isinstance(rule, rules.RuleCall):
+                            if rule.inverse_pause_secs > 0 and not result["triggered"]:
+                                event.paused_until = time.time() + rule.inverse_pause_secs
+                                event.state = events.EventState.paused
+                                event.pause_reason = f"{rule.type} rule inverse pause for {rule.inverse_pause_secs} secs"
+                                break
+                        if isinstance(rule, rules.RuleTracker):
+                            if rule.pause_on_known_secs > 0 and "known_person_seen" in result and result["known_person_seen"]:
+                                event.paused_until = time.time() + rule.pause_on_known_secs
+                                event.state = events.EventState.paused
+                                event.pause_reason = "known person"
+                                break
 
                         rule_results.append(result)
 
-                    if (event.state != "paused") and (rules.logical_trigger(event.rule_logic_type, [res['triggered'] for res in rule_results]) == True):
+                    if (event.state != events.EventState.paused) and (rules.logical_trigger(event.rule_logic_type, [res['triggered'] for res in rule_results]) == True):
                         event.is_triggered = True
                         event.last_triggered = time.time()
                         event.state = events.EventState.triggered
@@ -221,7 +178,7 @@ class eventManager(Sensor, Reconfigurable):
 
                         # not all rules consider or capture images and labels, check if we have them
                         for rule in event.rules:
-                            if rule_results[rule_index]['triggered'] == True:
+                            if "triggered" in rule_results[rule_index] and rule_results[rule_index]['triggered'] == True:
                                 if hasattr(rule, 'camera'):
                                     if "value" in rule_results[rule_index]:
                                         event.triggered_label = rule_results[rule_index]["value"]
@@ -233,7 +190,7 @@ class eventManager(Sensor, Reconfigurable):
                                         del rule_results[rule_index]["image"]
                                     if event.capture_video:
                                         asyncio.ensure_future(
-                                            triggered.request_capture(event, event_resources))
+                                            triggered.request_capture(event))
                             rule_index = rule_index + 1
 
                         event.triggered_rules = rule_results
@@ -264,12 +221,6 @@ class eventManager(Sensor, Reconfigurable):
                 else:
                     # sleep if we know we are not currently checking for this event
                     await asyncio.sleep(.5)
-
-                # check if mode override is expired
-                if self.mode_overridden != "" and (time.time() >= self.mode_override_until):
-                    self.mode = self.mode_overridden
-                    self.mode_overridden = ""
-                    self.mode_override_until = None
             except Exception as e:
                 self.logger.error(f'Error in event check loop: {e}')
                 self.logger.error(traceback.format_exc())
@@ -326,10 +277,10 @@ class eventManager(Sensor, Reconfigurable):
     async def get_readings(
         self, *, extra: Optional[Mapping[str, Any]] = None, timeout: Optional[float] = None, **kwargs
     ) -> Mapping[str, SensorReading]:
-        ret = {"state": {}, "mode": self.mode}
+        ret = {"state": {}, "mode": self.config.mode}
         include_dot = False
         graph: pydot.Graph
-        if "include_dot" in extra:
+        if extra is not None and "include_dot" in extra:
             include_dot = extra["include_dot"]
         if include_dot:
             graph = pydot.Dot("my_graph", graph_type="digraph",

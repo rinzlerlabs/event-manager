@@ -3,18 +3,18 @@ import asyncio
 
 from PIL import Image
 from viam.proto.app.data import Filter
-from viam.components.camera import CameraClient, Camera
-from viam.components.generic import GenericClient, Generic
+from viam.components.camera.client import CameraClient
+from viam.components.generic.client import GenericClient
 from viam.app.viam_client import ViamClient
 from viam.gen.app.data.v1.data_pb2 import ORDER_DESCENDING
 from viam.proto.app.data import BinaryID, Order
-from .globals import getParam
-from typing import cast
+from typing import cast, Any
 from datetime import datetime, timedelta, timezone
+from .logger import LOGGER
 
 import io
 
-async def request_capture(event, resources:dict):
+async def request_capture(event: Any):
     vs = _get_video_store(event.video_capture_resource, resources)
 
     await asyncio.sleep(event.event_video_capture_padding_secs)
@@ -42,9 +42,9 @@ async def request_capture(event, resources:dict):
         store_result = await vs.do_command( store_args )
         return store_result
     except Exception as e:
-        getParam('logger').error(e)
+        LOGGER.error(e)
 
-async def get_triggered_cloud(event_manager_name:str=None,organization_id:str=None, event_name:str=None, num:int=5, app_client:ViamClient=None):
+async def get_triggered_cloud(event_manager_name:str|None=None,organization_id:str|None=None, event_name:str|None=None, num:int=5, app_client:ViamClient|None=None):
     if (app_client): 
         filter_args = {}
         matched = []
@@ -80,19 +80,19 @@ async def get_triggered_cloud(event_manager_name:str=None,organization_id:str=No
         # now try to match any videos based on event timestamp
         videos = await app_client.data_client.binary_data_by_filter(filter=Filter(**filter_args), include_binary_data=False, limit=100, sort_order=Order.ORDER_DESCENDING)
         for video in videos[0]:
-            getParam('logger').debug(video.metadata)
+            LOGGER.debug(video.metadata)
             spl = video.metadata.file_name.split('--')
             if len(spl) > 3:
                 vtime = datetime.fromtimestamp( int(float(spl[3].replace('.mp4',''))), timezone.utc).isoformat() + 'Z'
                 if vtime in matched_index_by_dt:
-                    getParam('logger').debug(video)
+                    LOGGER.debug(video)
                     matched[matched_index_by_dt[vtime]]["video_id"] = video.metadata.id
         return matched
     else:
         return { "error": "app_api_key and app_api_key_id as well as data capture on GetReadings() for this module must be configured" }
 
 # deletes video from the cloud
-async def delete_from_cloud(id:str=None, organization_id:str=None, location_id:str=None, app_client:ViamClient=None):
+async def delete_from_cloud(id:str|None=None, organization_id:str|None=None, location_id:str|None=None, app_client:ViamClient|None=None):
     if (app_client): 
         resp = await app_client.data_client.delete_binary_data_by_ids(binary_ids=[BinaryID(file_id=id, organization_id=organization_id, location_id=location_id)])
         return resp
@@ -104,7 +104,7 @@ def _name_clean(string):
 def _label(event_name, cam_name, last_triggered):
     return _name_clean(f"SAVCAM--{event_name}--{cam_name}--{str(last_triggered)}")
 
-def _get_video_store(name, resources) -> Generic:
+def _get_video_store(name, resources) -> GenericClient|CameraClient:
     # newer versions of video-store resource are Generic, older are Camera
     is_generic = True
     resource_name = GenericClient.get_resource_name(name)

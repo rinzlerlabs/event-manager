@@ -23,19 +23,15 @@ from viam.components.power_sensor import PowerSensor
 from viam.components.sensor import Sensor
 from viam.components.servo import Servo
 from viam.services.slam import SLAM
-# from viam.services.mlmodel import MLModel
+# from viam.services.mlmodel import MLModel # Importing this takes a dependency on numpy, not doing that right now.
 from viam.services.motion import Motion
 from viam.services.discovery import Discovery
 from viam.services.navigation import Navigation
 from viam.services.vision import VisionClient
+from viam.services.generic import Generic as GenericService
 
 from .events import Event
 from .common import ResourceType, ResourceSubType, Resource, Modes
-# from src.action_class import Action
-# from src.notification_class import (NotificationEmail, NotificationSMS,
-#                                  NotificationWebhookGET)
-# from src.rules import (RuleCall, RuleClassifier, RuleDetector, RuleTime,
-#                     RuleTracker)
 
 class ModeOverride:
     mode: Modes
@@ -54,12 +50,12 @@ class ModeOverride:
         self.until = iso8601_to_timestamp(until_str)
 
 class Config:
-    mode: Modes
-    mode_override: str|None = None
+    __mode: Modes
+    __mode_override: str|None = None
     resources: Mapping[str, Resource]
     events: List[Event]
-    sms_module_name: str|None = None
-    email_module_name: str|None = None
+    sms_module: ResourceBase|None = None
+    email_module: ResourceBase|None = None
     app_api_key: str|None = None
     app_api_key_id: str|None = None
     dependencies: Mapping[ResourceName, ResourceBase] = {}
@@ -73,10 +69,18 @@ class Config:
         # First populate the simple fields
         sms_module = config.attributes.fields.get("sms_module", None)
         if sms_module is not None and sms_module.string_value != "":
-            self.sms_module_name = sms_module.string_value
+            sms_module = sms_module.string_value
+            if sms_module not in dependencies:
+                raise ValueError(f"SMS module '{sms_module}' not found in dependencies.")
+            sms_module_name = getDependencyName(ResourceType.service, ResourceSubType.generic, sms_module)
+            self.sms_module = dependencies[sms_module_name]
         email_module = config.attributes.fields.get("email_module", None)
         if email_module is not None and email_module.string_value != "":
-            self.email_module_name = email_module.string_value
+            email_module = email_module.string_value
+            if email_module not in dependencies:
+                raise ValueError(f"Email module '{email_module}' not found in dependencies.")
+            email_module_name = getDependencyName(ResourceType.service, ResourceSubType.generic, email_module)
+            self.email_module = dependencies[email_module_name]
         app_api_key = config.attributes.fields.get("app_api_key", None)
         if app_api_key is not None and app_api_key.string_value != "":
             self.app_api_key = app_api_key.string_value
@@ -89,9 +93,12 @@ class Config:
         # Then populate the complex fields
         self.__set_mode(config)
         self.__set_resources(config, dependencies)
-        self.__set_events(config, dependencies)
+
+        # This must be done after __set_resources
+        # because __set_events uses self.resources
+        self.__set_events(config, self.resources)
         
-    def __set_events(self, config: ComponentConfig, dependencies: Mapping[ResourceName, ResourceBase]):
+    def __set_events(self, config: ComponentConfig, resources: Mapping[str, Resource]):
         if "events" not in config.attributes.fields:
             raise KeyError("The key 'events' is missing from the configuration.")
         events_val = config.attributes.fields.get("events", None)
@@ -110,7 +117,7 @@ class Config:
             event = struct_to_dict(event_struct.struct_value)
             if not isinstance(event, Mapping):
                 raise TypeError("Each event must be a dictionary.")
-            self.events.append(Event(event,dependencies))
+            self.events.append(Event(event, resources))
 
     def __set_mode(self, config: ComponentConfig):
         if "mode" not in config.attributes.fields:
@@ -156,14 +163,22 @@ class Config:
                 resource=deps[depName]
             )
 
-    def get_effective_mode(self):
-        if self.mode_override is None:
+    @property
+    def mode(self) -> Modes:
+        if self.__mode_override is None:
             return self.mode
-        if not isinstance(self.mode_override, ModeOverride):
+        if not isinstance(self.__mode_override, ModeOverride):
             raise TypeError("The ModeOverride must be an instance of ModeOverride.")
-        if self.mode_override.until < datetime.now().timestamp():
-            return self.mode
-        return self.mode_override.mode
+        if self.__mode_override.until > datetime.now().timestamp():
+            return self.__mode_override.mode
+        self.__mode_override = None # If the override has expired, remove it so we don't check it every time
+        return self.__mode
+    
+    @mode.setter
+    def mode(self, mode: Modes):
+        if not isinstance(mode, Modes):
+            raise TypeError("The mode must be an instance of Modes.")
+        self.__mode = mode
 
 def getDependencyName(type: str, subtype: str, name: str) -> ResourceName:
     if type == ResourceType.component:

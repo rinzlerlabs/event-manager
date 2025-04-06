@@ -13,7 +13,7 @@ from typing import Mapping
 
 from src.config import Config, Modes, ResourceType, ResourceSubType
 from src.event_manager import eventManager
-from src.rules import RuleLogicType, RuleType, RuleCall
+from src.rules import RuleLogicType, RuleType, RuleCall, Operator
 
 def create_test_component_config() -> ComponentConfig:
     # Load the JSON string into a Python dictionary
@@ -50,7 +50,7 @@ def test_config_parsing():
     assert config is not None
     assert isinstance(config, Config)
     assert config.mode is not None
-    assert config.get_effective_mode() == Modes.active
+    assert config.mode == Modes.active
     assert len(config.resources) == 7
     assert config.resources["kasa_plug_1"].type == ResourceType.component
     assert config.resources["kasa_plug_1"].sub_type == ResourceSubType.generic
@@ -74,11 +74,12 @@ def test_config_parsing():
     assert len(config.events[0].rules) == 1
     assert config.events[0].rules[0].type == RuleType.call
     assert isinstance(config.events[0].rules[0], RuleCall)
-    assert config.events[0].rules[0].resource == "stuff_sensor"
+    assert isinstance(config.events[0].rules[0].resource, ResourceBase)
+    assert config.events[0].rules[0].resource.name == "stuff_sensor"
     assert config.events[0].rules[0].method == "get_readings"
     assert config.events[0].rules[0].result_path == "big.good"
     assert config.events[0].rules[0].result_function == "len"
-    assert config.events[0].rules[0].result_operator == "gt"
+    assert config.events[0].rules[0].result_operator == Operator.gt
     assert config.events[0].rules[0].result_value == 3
     assert config.events[0].rules[0].inverse_pause_secs == 900
     assert config.events[1].name == "a person camera 1"

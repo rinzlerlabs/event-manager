@@ -1,7 +1,6 @@
 from enum import Enum
+from typing import Mapping
 
-from viam.proto.common import ResourceName
-from viam.resource.base import ResourceBase
 from viam.components.arm import Arm
 from viam.components.base import Base
 from viam.components.board import Board
@@ -16,13 +15,16 @@ from viam.components.movement_sensor import MovementSensor
 from viam.components.power_sensor import PowerSensor
 from viam.components.sensor import Sensor
 from viam.components.servo import Servo
-from viam.services.slam import SLAM
+from viam.proto.common import ResourceName
+from viam.resource.base import ResourceBase
+from viam.services.discovery import Discovery
+from viam.services.generic import Generic as GenericService
 # from viam.services.mlmodel import MLModel # Importing this takes a dependency on numpy, not doing that right now.
 from viam.services.motion import Motion
-from viam.services.discovery import Discovery
 from viam.services.navigation import Navigation
+from viam.services.slam import SLAM
 from viam.services.vision import VisionClient
-from viam.services.generic import Generic as GenericService
+
 
 class ResourceType(str, Enum):
     component = "component"
@@ -137,3 +139,47 @@ def get_dependency_resource_name(type: str, subtype: str, name: str) -> Resource
             raise ValueError(f"Unknown or unsupported service subtype: {subtype}, name: {name}")
     else:
         raise ValueError(f"Unknown resource type: {type}")
+
+def get_resource_base_from_resource_map_by_name(name:str, dependencies:Mapping[ResourceName, ResourceBase]) -> ResourceBase:
+    """Get the dependency from the name
+    Args:
+        name (str): The name of the dependency
+        dependencies (Mapping[ResourceName, ResourceBase]): The dependencies
+    Returns:
+        ResourceBase: The dependency
+    Raises:
+        TypeError: If the name is not a string or if the dependencies are not a mapping
+        ValueError: If the dependency is not found
+    """
+    if not isinstance(name, str):
+        raise TypeError("The name must be a string.")
+    if not isinstance(dependencies, Mapping):
+        raise TypeError("The dependencies must be a mapping.")
+    if not dependencies:
+        raise ValueError("The dependencies cannot be empty.")
+    for depName, dep in dependencies.items():
+        if depName.name == name:
+            return dep
+    raise ValueError(f"Dependency with name {name} not found in dependencies.")
+
+def get_resource_from_resource_map_by_name(name:str, dependencies:Mapping[str, Resource]) -> Resource:
+    """Get the dependency from the name
+    Args:
+        name (str): The name of the dependency
+        dependencies (Mapping[str, Resource]): The dependencies
+    Returns:
+        ResourceBase: The dependency
+    Raises:
+        TypeError: If the name is not a string or if the dependencies are not a mapping
+        ValueError: If the dependency is not found
+    """
+    if not isinstance(name, str):
+        raise TypeError("The name must be a string.")
+    if not isinstance(dependencies, Mapping):
+        raise TypeError("The dependencies must be a mapping.")
+    if not dependencies:
+        raise ValueError("The dependencies cannot be empty.")
+    for depName, dep in dependencies.items():
+        if dep.resource.name == name:
+            return dep
+    raise ValueError(f"Dependency with name {name} not found in dependencies.")

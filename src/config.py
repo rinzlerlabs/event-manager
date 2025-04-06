@@ -1,16 +1,16 @@
-from enum import Enum
-from typing import List, Mapping, cast
 import re
-from datetime import datetime, timezone, timedelta
-
-from viam.utils import ValueTypes, struct_to_dict
+from datetime import datetime, timedelta, timezone
+from typing import List, Mapping
 
 from viam.proto.app.robot import ComponentConfig
 from viam.proto.common import ResourceName
 from viam.resource.base import ResourceBase
+from viam.utils import struct_to_dict
 
+from .common import (Modes, Resource, ResourceSubType, ResourceType,
+                     get_dependency_resource_name)
 from .events import Event
-from .common import ResourceType, ResourceSubType, Resource, Modes, get_dependency_resource_name
+
 
 class ModeOverride:
     mode: Modes

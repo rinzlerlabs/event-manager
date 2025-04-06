@@ -1,35 +1,28 @@
-from typing import ClassVar, Mapping, Sequence, Any, Dict, Optional, Tuple, Final, List, cast
-from typing_extensions import Self
-from typing import Final
+import asyncio
+import re
+import time
+import traceback
+from datetime import datetime, timedelta, timezone
+from typing import (Any, ClassVar, Dict, Mapping, Optional, cast)
 
+import pydot
+from typing_extensions import Self
+from viam.app.viam_client import ViamClient
+from viam.components.sensor import Sensor
+from viam.errors import NoCaptureToStoreError
 from viam.module.types import Reconfigurable
 from viam.proto.app.robot import ComponentConfig
-from viam.proto.common import ResourceName, Vector3
+from viam.proto.common import ResourceName
 from viam.resource.base import ResourceBase
 from viam.resource.types import Model, ModelFamily
-
-from viam.services.generic import Generic as GenericService
-from viam.components.sensor import Sensor
-from viam.utils import SensorReading
-from viam.errors import NoCaptureToStoreError
-from viam.utils import from_dm_from_extra
-
-from viam.utils import ValueTypes, struct_to_dict
-from viam.app.viam_client import ViamClient
 from viam.rpc.dial import DialOptions
+from viam.utils import (SensorReading, ValueTypes, from_dm_from_extra,
+                        struct_to_dict)
 
-from . import events, rules, notifications, triggered, actions
-
-import time
-import copy
-import asyncio
-from datetime import datetime, timezone, timedelta
-import re
-import pydot
-import traceback
-from enum import Enum
-from .config import Modes, Config
+from . import actions, events, notifications, rules, triggered
+from .config import Config, Modes
 from .logger import LOGGER
+
 
 class eventManager(Sensor, Reconfigurable):
     MODEL: ClassVar[Model] = Model(
@@ -128,11 +121,11 @@ class eventManager(Sensor, Reconfigurable):
 
                     event.triggered_camera = ""
                     event.triggered_label = ""
-                    event.triggered_rules = {}
+                    event.triggered_rules = []
 
                     actions.flip_action_status(event, False)
 
-                    rule_results = []
+                    rule_results:list[dict[str, Any]] = []
                     for rule in event.rules:
                         self.logger.debug(rule)
                         result = await rules.eval_rule(rule)
@@ -196,9 +189,7 @@ class eventManager(Sensor, Reconfigurable):
                         event.triggered_rules = rule_results
 
                         for n in event.notifications:
-                            if triggered_image != None:
-                                n.image = triggered_image
-                            await notifications.notify(event, n, self.config.resources)
+                            await notifications.notify(event, n, self.config.resources,triggered_image)
 
                     # try to respect detection_hz as desired speed of detections
                     elapsed = (datetime.now() - start_time).total_seconds()
@@ -216,7 +207,7 @@ class eventManager(Sensor, Reconfigurable):
                     if len(event.actions):
                         sms_message = await notifications.check_sms_response(event.notifications, event.last_triggered, self.config.resources)
                     for action in event.actions:
-                        await self.event_action(event, action, sms_message, self.config.resources)
+                        await self.event_action(event, action, sms_message)
                     await asyncio.sleep(1)
                 else:
                     # sleep if we know we are not currently checking for this event
@@ -228,15 +219,15 @@ class eventManager(Sensor, Reconfigurable):
 
         self.logger.info("Ending event check loop for " + event.name)
 
-    async def event_action(self, event, action, message, event_resources):
+    async def event_action(self, event:events.Event, action:actions.Action, message:str|None):
         should_action = await actions.eval_action(event, action, message)
         if should_action:
-            if message != "":
+            if message is not None and message != "":
                 # once we get a valid message, no other actions should be taken
                 event.actions_paused = True
                 event.state = events.EventState.paused
                 event.pause_reason = "sms"
-            await actions.do_action(event, action, event_resources)
+            await actions.do_action(event, action)
 
     async def do_command(
         self,
@@ -245,12 +236,48 @@ class eventManager(Sensor, Reconfigurable):
         timeout: Optional[float] = None,
         **kwargs
     ) -> Mapping[str, ValueTypes]:
-        result = {}
+        result:Dict[str, ValueTypes] = {}
         for name, args in command.items():
+            if args is None or not isinstance(args, (dict, Mapping)):
+                raise ValueError("args must be a dictionary")
             if name == "get_triggered":
-                result["triggered"] = await triggered.get_triggered_cloud(event_manager_name=self.name, organization_id=args.get("organization_id", None), num=args.get("number", 5), event_name=args.get("event", None), app_client=self.app_client)
+                if not isinstance(args, dict):
+                    raise ValueError("args must be a dictionary")
+                
+                # As far as I can tell, the org_id is needed for the cloud query
+                org_id = args.get("organization_id", None)
+                if org_id is None:
+                    raise ValueError("organization_id is required")
+                
+                if self.app_client is None:
+                    result["triggered"] = { "error": "app_api_key and app_api_key_id as well as data capture on GetReadings() for this module must be configured" }
+                else:
+                    result["triggered"] = await triggered.get_triggered_cloud(self.app_client, self.name, org_id, num=args.get("number", 5), event_name=args.get("event", None))
             elif name == "delete_triggered_video":
-                result["total"] = await triggered.delete_from_cloud(id=args.get("id", None), location_id=args.get("location_id", None), organization_id=args.get("organization_id", None), app_client=self.app_client)
+                if not isinstance(args, dict):
+                    raise ValueError("args must be a dictionary")
+                id = args.get("id", None)
+                if id is None:
+                    raise ValueError("id is required")
+                if not isinstance(id, str):
+                    raise ValueError("id must be a string")
+
+                location_id = args.get("location_id", None)
+                if location_id is None:
+                    raise ValueError("location_id is required")
+                if not isinstance(location_id, str):
+                    raise ValueError("location_id must be a string")
+
+                organization_id = args.get("organization_id", None)
+                if organization_id is None:
+                    raise ValueError("organization_id is required")
+                if not isinstance(organization_id, str):
+                    raise ValueError("organization_id must be a string")
+                
+                if self.app_client is None:
+                    result["total"] = { "error": "app_api_key and app_api_key_id as well as data capture on GetReadings() for this module must be configured" }
+                else:
+                    result["total"] = await triggered.delete_from_cloud(self.app_client, id, location_id, organization_id)
             elif name == "trigger_event":
                 for e in self.event_states:
                     if e.name == args.get("event", ""):
@@ -269,19 +296,22 @@ class eventManager(Sensor, Reconfigurable):
                 for e in self.event_states:
                     if (e.name == args.get("event", "")) and e.is_triggered == True:
                         for action in e.actions:
-                            await self.event_action(e, action, args.get("response", ""), event_resources)
+                            await self.event_action(e, action, args.get("response", ""))
                 result = {"responded": True}
 
         return result
 
     async def get_readings(
-        self, *, extra: Optional[Mapping[str, Any]] = None, timeout: Optional[float] = None, **kwargs
+        self, *, extra: Optional[Mapping[str, ValueTypes]] = None, timeout: Optional[float] = None, **kwargs
     ) -> Mapping[str, SensorReading]:
-        ret = {"state": {}, "mode": self.config.mode}
+        ret:Mapping[str, SensorReading] = {}
+        ret["state"] = {}
+        ret["mode"]= self.config.mode
         include_dot = False
-        graph: pydot.Graph
+        graph: pydot.Graph|None = None
         if extra is not None and "include_dot" in extra:
-            include_dot = extra["include_dot"]
+            include_dot = bool(extra["include_dot"])
+        
         if include_dot:
             graph = pydot.Dot("my_graph", graph_type="digraph",
                               bgcolor="white", fontname="Courier", fontsize="12pt")
@@ -289,7 +319,7 @@ class eventManager(Sensor, Reconfigurable):
         event_number = 0
         for e in self.event_states:
             # if this is a call from data management, only store events once while they are in 'triggered' or 'actioning' state
-            if from_dm_from_extra(extra):
+            if from_dm_from_extra(cast(Dict[str, Any], extra)): # This cast may fail if extra is not a dict, but afaik, it is a dict
                 if (e.state == events.EventState.triggered) or (e.state == events.EventState.actioning):
                     if e.name in self.dm_sent_status and self.dm_sent_status[e.name] == e.last_triggered:
                         continue
@@ -297,10 +327,9 @@ class eventManager(Sensor, Reconfigurable):
                         self.dm_sent_status[e.name] = e.last_triggered
                 else:
                     continue
-
-            ret["state"][e.name] = {
-                "state": e.state,
-            }
+            
+            if e.name not in ret["state"]:
+                ret["state"][e.name] = {"state": e.state.name}
 
             if e.last_triggered > 0:
                 ret["state"][e.name]["last_triggered"] = datetime.fromtimestamp(
@@ -312,6 +341,7 @@ class eventManager(Sensor, Reconfigurable):
             if e.pause_reason != "":
                 ret["state"][e.name]["pause_reason"] = e.pause_reason
 
+            layer: pydot.Subgraph|None = None
             if include_dot:
                 event_number = event_number + 1
 
@@ -356,7 +386,7 @@ class eventManager(Sensor, Reconfigurable):
                         int(a.last_taken), timezone.utc).isoformat() + 'Z'
                 actions.append(a_ret)
 
-                if include_dot:
+                if layer is not None:
                     a_label = f'Actioning\n{a.resource}/{a.method}'
                     a_font = "Courier"
                     if "when" in a_ret:
@@ -372,17 +402,17 @@ class eventManager(Sensor, Reconfigurable):
 
             ret["state"][e.name]["actions"] = actions
             if include_dot:
-                if len(e.actions) == 0:
+                if len(e.actions) == 0 and layer is not None:
                     # connect straight to Paused if no configured actions
                     layer.add_edge(pydot.Edge(
                         f'Triggered{event_number}', f'Paused{event_number}'))
+                if graph is not None:
+                    graph.add_subgraph(layer)
 
-                graph.add_subgraph(layer)
-
-        if from_dm_from_extra(extra) and len(ret["state"]) == 0:
+        if from_dm_from_extra(cast(Dict[str, ValueTypes], extra)) and len(ret["state"]) == 0:
             raise NoCaptureToStoreError()
 
-        if include_dot:
+        if include_dot and graph is not None:
             ret["dot"] = graph.to_string()
         return ret
 

@@ -1,15 +1,17 @@
-import pytest
 import json
 from google.protobuf.json_format import ParseDict
 from viam.proto.app.robot import ComponentConfig
 from viam.proto.common import ResourceName
 from viam.resource.base import ResourceBase
 from viam.resource.types import resource_name_from_string
-from viam.components.generic.client import GenericClient as Generic
+from viam.components.generic.client import GenericClient as GenericComponent
 from viam.components.camera.client import CameraClient as Camera
 from viam.components.sensor.client import SensorClient as Sensor
+from viam.services.generic.client import GenericClient as GenericService
 from viam.services.vision import VisionClient as Vision
 from typing import Mapping
+
+from unittest.mock import MagicMock
 
 from src.config import Config, Modes, ResourceType, ResourceSubType
 from src.event_manager import eventManager
@@ -29,22 +31,63 @@ def create_test_component_config() -> ComponentConfig:
     
     return config
 
+def mock_generic_component(name: str) -> GenericComponent:
+    """Mock a GenericComponent for testing."""
+    component = MagicMock(spec=GenericComponent)
+    component.name = name
+    component.type = ResourceType.component
+    component.sub_type = ResourceSubType.generic
+    component.do_command = MagicMock(return_value = {})
+    return component
+def mock_camera(name: str) -> Camera:
+    """Mock a Camera for testing."""
+    camera = MagicMock(spec=Camera)
+    camera.name = name
+    camera.type = ResourceType.component
+    camera.sub_type = ResourceSubType.camera
+    camera.do_command = MagicMock(return_value = {})
+    return camera
+def mock_sensor(name: str) -> Sensor:
+    """Mock a Sensor for testing."""
+    sensor = MagicMock(spec=Sensor)
+    sensor.name = name
+    sensor.type = ResourceType.component
+    sensor.sub_type = ResourceSubType.sensor
+    sensor.do_command = MagicMock(return_value = {})
+    return sensor
+def mock_vision(name: str) -> Vision:
+    """Mock a Vision for testing."""
+    vision = MagicMock(spec=Vision)
+    vision.name = name
+    vision.type = ResourceType.service
+    vision.sub_type = ResourceSubType.vision
+    vision.do_command = MagicMock(return_value = {})
+    return vision
+def mock_generic_service(name: str) -> GenericService:
+    """Mock a GenericService for testing."""
+    service = MagicMock(spec=GenericService)
+    service.name = name
+    service.type = ResourceType.service
+    service.sub_type = ResourceSubType.generic
+    service.do_command = MagicMock(return_value = {})
+    return service
+
 def test_config_parsing():
     # Create a test ComponentConfig
     test_config = create_test_component_config()
     
     # Create a mock dependencies mapping
     dependencies:Mapping[ResourceName, ResourceBase] = {
-        resource_name_from_string("rdk:component:generic/kasa_plug_1"): Generic(name="kasa_plug_1", channel=None), #type:ignore
-        resource_name_from_string("rdk:component:generic/kasa_plug_2"): Generic(name="kasa_plug_2", channel=None), #type:ignore
-        resource_name_from_string("rdk:component:camera/cam1"): Camera(name="cam1", channel=None), #type:ignore
-        resource_name_from_string("rdk:component:camera/vcam1"): Camera(name="vcam1", channel=None), #type:ignore
-        resource_name_from_string("rdk:service:vision/tracker1"): Vision(name="tracker1", channel=None), #type:ignore
-        resource_name_from_string("rdk:service:vision/person_detector"): Vision(name="person_detector", channel=None), #type:ignore
-        resource_name_from_string("rdk:component:sensor/stuff_sensor"): Sensor(name="stuff_sensor", channel=None), #type:ignore
-        resource_name_from_string("rdk:service:generic/sms"): Generic(name="sms", channel=None), #type:ignore
-        resource_name_from_string("rdk:service:generic/email"): Generic(name="email", channel=None), #type:ignore
-        resource_name_from_string("rdk:component:generic/video_capture"): Generic(name="video_capture", channel=None), #type:ignore
+        resource_name_from_string("rdk:component:generic/kasa_plug_1"): mock_generic_component(name="kasa_plug_1"), #type:ignore
+        resource_name_from_string("rdk:component:generic/kasa_plug_2"): mock_generic_component(name="kasa_plug_2"), #type:ignore
+        resource_name_from_string("rdk:component:camera/cam1"): mock_camera(name="cam1"), #type:ignore
+        resource_name_from_string("rdk:component:camera/vcam1"): mock_camera(name="vcam1"), #type:ignore
+        resource_name_from_string("rdk:service:vision/tracker1"): mock_vision(name="tracker1"), #type:ignore
+        resource_name_from_string("rdk:service:vision/person_detector"): mock_vision(name="person_detector"), #type:ignore
+        resource_name_from_string("rdk:component:sensor/stuff_sensor"): mock_sensor(name="stuff_sensor"), #type:ignore
+        resource_name_from_string("rdk:service:generic/sms"): mock_generic_service(name="sms"), #type:ignore
+        resource_name_from_string("rdk:service:generic/email"): mock_generic_service(name="email"), #type:ignore
+        resource_name_from_string("rdk:component:generic/video_capture"): mock_generic_component(name="video_capture"), #type:ignore
     }
 
     # Parse the config
@@ -54,7 +97,7 @@ def test_config_parsing():
     assert isinstance(config, Config)
     assert config.mode is not None
     assert config.mode == Modes.active
-    assert len(config.resources) == 7
+    assert len(config.resources) == 9
     assert config.resources["kasa_plug_1"].type == ResourceType.component
     assert config.resources["kasa_plug_1"].sub_type == ResourceSubType.generic
     assert config.resources["kasa_plug_2"].type == ResourceType.component
@@ -65,6 +108,10 @@ def test_config_parsing():
     assert config.resources["vcam1"].sub_type == ResourceSubType.camera
     assert config.resources["tracker1"].type == ResourceType.service
     assert config.resources["tracker1"].sub_type == ResourceSubType.vision
+    assert config.resources["sms_module"].type == ResourceType.component # I'm not sure if this is correct
+    assert config.resources["sms_module"].sub_type == ResourceSubType.generic
+    assert config.resources["email_module"].type == ResourceType.component # I'm not sure if this is correct
+    assert config.resources["email_module"].sub_type == ResourceSubType.generic
     
     assert len(config.events) == 3
     assert config.events[0].name == "more than 3 results"

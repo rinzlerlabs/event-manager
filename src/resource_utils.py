@@ -2,10 +2,7 @@ import json
 from typing import Any
 
 from viam.resource.base import ResourceBase
-from viam.components.generic import Generic as GenericComponent
-from viam.services.generic import Generic as GenericService
-from viam.services.vision import VisionClient
-from viam.components.sensor import Sensor
+
 
 # TODO: Need to resolve the circular import issue with events, until then "event" must be untyped
 async def call_method(resource:ResourceBase, method:str, payload:Any, event:Any) -> Any:

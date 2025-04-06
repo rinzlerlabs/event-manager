@@ -1,15 +1,16 @@
 from enum import Enum
-from typing import Mapping, cast
+from typing import Any, Mapping, cast
 
 from viam.resource.base import ResourceBase
 from viam.utils import ValueTypes
 
 from .action_class import Action
-from .notification_class import (NotificationEmail, NotificationSMS, NotificationType,
-                                 NotificationWebhookGET)
-from .rules import (RuleCall, RuleClassifier, RuleDetector, RuleTime,
-                    RuleTracker, RuleLogicType, RuleType)
-from .common import Resource, ResourceType, ResourceSubType, Modes, get_dependency_resource_name
+from .common import (Modes, Resource, ResourceSubType, ResourceType)
+from .notification_class import (NotificationEmail, NotificationSMS,
+                                 NotificationType, NotificationWebhookGET)
+from .rules import (RuleCall, RuleClassifier, RuleDetector, RuleLogicType,
+                    RuleTime, RuleTracker, RuleType)
+
 
 class EventState(str, Enum):
     setup = "setup"
@@ -36,7 +37,7 @@ class Event():
     notifications: list[NotificationSMS|NotificationEmail|NotificationWebhookGET]
     actions: list[Action]
     actions_paused: bool = False
-    triggered_rules: dict = {}
+    triggered_rules:list[dict[str, Any]] = []
     triggered_camera: str = ""
     triggered_label: str = ""
     trigger_sequence_count: int = 1
@@ -67,7 +68,7 @@ class Event():
                 raise ValueError(f"Dependency '{config['video_capture_resource']}' cannot be None.")
             if dependencies[config["video_capture_resource"]].type != ResourceType.component or (dependencies[config["video_capture_resource"]].sub_type != ResourceSubType.camera and dependencies[config["video_capture_resource"]].sub_type != ResourceSubType.generic):
                 raise ValueError(f"Dependency '{config['video_capture_resource']}' must be a camera or generic component.")
-            self.video_capture_resource = dependencies["video_capture_resource"].resource
+            self.video_capture_resource = dependencies[config["video_capture_resource"]].resource
         
         if "event_video_capture_padding_secs" in config:
             if not isinstance(config["event_video_capture_padding_secs"], (int,float)):
@@ -130,19 +131,19 @@ class Event():
         if not isinstance(config["notifications"], list):
             raise TypeError("The value for 'notifications' must be a list.")
         self.notifications = []
-        for notification in config["notifications"]:
-            if not isinstance(notification, dict):
+        for notification_config in config["notifications"]:
+            if not isinstance(notification_config, dict):
                 raise TypeError("Each notification in 'notifications' must be a dictionary.")
-            if "type" not in notification:
+            if "type" not in notification_config:
                 raise KeyError("The key 'type' is missing from the notification configuration.")
-            if notification["type"] == NotificationType.sms:
-                self.notifications.append(NotificationSMS(**notification))
-            elif notification["type"] == NotificationType.email:
-                self.notifications.append(NotificationEmail(**notification))
-            elif notification["type"] == NotificationType.webhook_get:
-                self.notifications.append(NotificationWebhookGET(**notification))
+            if notification_config["type"] == NotificationType.sms:
+                self.notifications.append(NotificationSMS(notification_config))
+            elif notification_config["type"] == NotificationType.email:
+                self.notifications.append(NotificationEmail(notification_config))
+            elif notification_config["type"] == NotificationType.webhook_get:
+                self.notifications.append(NotificationWebhookGET(notification_config))
             else:
-                raise ValueError(f"Invalid notification type: {notification['type']}")
+                raise ValueError(f"Invalid notification type: {notification_config['type']}")
 
         if "actions" in config:
             if not isinstance(config["actions"], list):
@@ -151,7 +152,7 @@ class Event():
             for action in config["actions"]:
                 if not isinstance(action, dict):
                     raise TypeError("Each action in 'actions' must be a dictionary.")
-                self.actions.append(Action(**action))
+                self.actions.append(Action(action, dependencies))
 
         if "trigger_sequence_count" in config:
             if not isinstance(config["trigger_sequence_count"], float):

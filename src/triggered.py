@@ -1,18 +1,14 @@
-import bson
 import asyncio
-
-from viam.proto.app.data import Filter
-from viam.components.camera.client import CameraClient
-from viam.components.generic.client import GenericClient
-from viam.app.viam_client import ViamClient
-from viam.gen.app.data.v1.data_pb2 import ORDER_DESCENDING
-from viam.proto.app.data import BinaryID, Order
-from viam.utils import ValueTypes
-from typing import cast, Any, Mapping
 from datetime import datetime, timedelta, timezone
+from typing import Any, Mapping
+
+import bson
+from viam.app.viam_client import ViamClient
+from viam.proto.app.data import BinaryID, Filter, Order
+from viam.utils import ValueTypes
+
 from .logger import LOGGER
 
-import io
 
 async def request_capture(event: Any) -> Mapping[str, ValueTypes]|None:
     await asyncio.sleep(event.event_video_capture_padding_secs)
@@ -45,60 +41,58 @@ async def request_capture(event: Any) -> Mapping[str, ValueTypes]|None:
     except Exception as e:
         LOGGER.error(e)
 
-async def get_triggered_cloud(event_manager_name:str|None=None,organization_id:str|None=None, event_name:str|None=None, num:int=5, app_client:ViamClient|None=None):
-    if (app_client): 
-        filter_args = {}
-        matched = []
-        matched_index_by_dt = {}
+async def get_triggered_cloud(app_client:ViamClient, event_manager_name:str,organization_id:str, event_name:str|None=None, num:int=5)-> Any: # This return value is a cluster...we need to fix this
+    if app_client is None:
+        raise ValueError("app_client is None")
+    filter_args = {}
+    matched = []
+    matched_index_by_dt = {}
 
-        # first get recent tabular data, as this is the "data of record"
-        # Note: the assumption is made that no other tabular data is being stored for this component
-        query = []
-        match = {"component_name": event_manager_name}
-        if event_name != None:
-            match[f"data.readings.state.{event_name}" ] = { "$exists": True }
-            query.append(bson.encode({ "$match": { f"data.readings.state.{event_name}" : { "$exists": True }}}))
-        query.append(bson.encode({ "$match": match }))
-        query.append(bson.encode({ "$sort": { "time_received": -1 } }))
-        query.append(bson.encode({ "$limit": num }))
-    
-        tabular_data = await app_client.data_client.tabular_data_by_mql(organization_id=organization_id, mql_binary=query)
-        for tabular in tabular_data:
-            state = tabular["data"]["readings"]["state"]
-            for reading in state:
-                if event_name == None or event_name == reading:
-                    matched_index_by_dt[state[reading]["last_triggered"]] = len(matched)
-                    triggered_camera = ""
-                    if "triggered_camera" in state[reading]:
-                        triggered_camera = state[reading]["triggered_camera"]
-                    matched.append({"event": reading, "time": state[reading]["last_triggered"],
-                                    "location_id": tabular["location_id"], "organization_id": tabular["organization_id"], "triggered_camera": triggered_camera })
-                if len(matched) == num:
-                    break
+    # first get recent tabular data, as this is the "data of record"
+    # Note: the assumption is made that no other tabular data is being stored for this component
+    query = []
+    match:dict = {"component_name": event_manager_name}
+    if event_name != None:
+        match[f"data.readings.state.{event_name}" ] = { "$exists": True }
+        query.append(bson.encode({ "$match": { f"data.readings.state.{event_name}" : { "$exists": True }}}))
+    query.append(bson.encode({ "$match": match }))
+    query.append(bson.encode({ "$sort": { "time_received": -1 } }))
+    query.append(bson.encode({ "$limit": num }))
+
+    tabular_data = await app_client.data_client.tabular_data_by_mql(organization_id=organization_id, query=query)
+    for tabular in tabular_data:
+        state = tabular["data"]["readings"]["state"] # type: ignore
+        for reading in state:
+            if event_name == None or event_name == reading:
+                matched_index_by_dt[state[reading]["last_triggered"]] = len(matched)# type: ignore
+                triggered_camera = ""
+                if "triggered_camera" in state[reading]:# type: ignore
+                    triggered_camera = state[reading]["triggered_camera"]# type: ignore
+                matched.append({"event": reading, "time": state[reading]["last_triggered"],# type: ignore
+                                "location_id": tabular["location_id"], "organization_id": tabular["organization_id"], "triggered_camera": triggered_camera })
             if len(matched) == num:
                 break
+        if len(matched) == num:
+            break
 
-        # now try to match any videos based on event timestamp
-        videos = await app_client.data_client.binary_data_by_filter(filter=Filter(**filter_args), include_binary_data=False, limit=100, sort_order=Order.ORDER_DESCENDING)
-        for video in videos[0]:
-            LOGGER.debug(video.metadata)
-            spl = video.metadata.file_name.split('--')
-            if len(spl) > 3:
-                vtime = datetime.fromtimestamp( int(float(spl[3].replace('.mp4',''))), timezone.utc).isoformat() + 'Z'
-                if vtime in matched_index_by_dt:
-                    LOGGER.debug(video)
-                    matched[matched_index_by_dt[vtime]]["video_id"] = video.metadata.id
-        return matched
-    else:
-        return { "error": "app_api_key and app_api_key_id as well as data capture on GetReadings() for this module must be configured" }
+    # now try to match any videos based on event timestamp
+    videos = await app_client.data_client.binary_data_by_filter(filter=Filter(**filter_args), include_binary_data=False, limit=100, sort_order=Order.ORDER_DESCENDING)
+    for video in videos[0]:
+        LOGGER.debug(video.metadata)
+        spl = video.metadata.file_name.split('--')
+        if len(spl) > 3:
+            vtime = datetime.fromtimestamp( int(float(spl[3].replace('.mp4',''))), timezone.utc).isoformat() + 'Z'
+            if vtime in matched_index_by_dt:
+                LOGGER.debug(video)
+                matched[matched_index_by_dt[vtime]]["video_id"] = video.metadata.id
+    return matched
 
 # deletes video from the cloud
-async def delete_from_cloud(id:str|None=None, organization_id:str|None=None, location_id:str|None=None, app_client:ViamClient|None=None):
-    if (app_client): 
-        resp = await app_client.data_client.delete_binary_data_by_ids(binary_ids=[BinaryID(file_id=id, organization_id=organization_id, location_id=location_id)])
-        return resp
-    else:
-        return { "error": "app_api_key and app_api_key_id as well as data capture on GetReadings() for this module must be configured" }
+async def delete_from_cloud(app_client:ViamClient, id:str, organization_id:str, location_id:str) -> int:
+    if app_client is None:
+        raise ValueError("app_client is None")
+    resp = await app_client.data_client.delete_binary_data_by_ids(binary_ids=[BinaryID(file_id=id, organization_id=organization_id, location_id=location_id)])
+    return resp
 def _name_clean(string):
     return string.replace(' ','_')
 

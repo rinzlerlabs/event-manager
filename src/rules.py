@@ -1,24 +1,22 @@
-import asyncio
+import operator
 import re
 from datetime import datetime
 from enum import Enum
 from typing import Any, Mapping, cast
-import operator
 
-from PIL import Image
 from viam.components.camera.client import Camera
-from viam.services.vision.client import VisionClient
 from viam.media.utils.pil import viam_to_pil_image
-from viam.proto.common import ResourceName
 from viam.resource.base import ResourceBase
-from viam.services.vision import (Classification, Detection, VisionClient)
+from viam.services.vision import Classification, Detection, VisionClient
+from viam.services.vision.client import VisionClient
 from viam.utils import ValueTypes
 
 from src.common import Resource
 
 from . import logic
-from .resource_utils import call_method
 from .logger import LOGGER
+from .resource_utils import call_method
+
 
 class Operator(Enum):
     eq = ("eq", operator.eq)
@@ -86,7 +84,7 @@ class RuleDetector(Rule):
     confidence_pct: float
     inverse_pause_secs: int
 
-    def __init__(self, conf: Mapping[str, ValueTypes], deps: Mapping[str, Resource]):
+    def __init__(self, conf: Mapping[str, ValueTypes], resources: Mapping[str, Resource]):
         super().__init__(RuleType.detection)
         
         # Check if the camera is in the configuration and if it's a string
@@ -97,11 +95,11 @@ class RuleDetector(Rule):
         self.camera_name = conf["camera"]
         
         # Check if the camera is in the dependencies and make sure it's a Camera
-        if conf["camera"] not in deps:
+        if conf["camera"] not in resources:
             raise ValueError(f"Camera {conf['camera']} not found in dependencies.")
-        if not isinstance(deps[conf["camera"]].resource, Camera):
+        if not isinstance(resources[conf["camera"]].resource, Camera):
             raise TypeError("The camera resource must be of type Camera.")
-        self.camera = cast(Camera, deps[conf["camera"]].resource)
+        self.camera = cast(Camera, resources[conf["camera"]].resource)
         
         # Check if detector is in the configuration and if it's a string
         # Check if the detector is in the dependencies and make sure it's a VisionClient
@@ -109,11 +107,11 @@ class RuleDetector(Rule):
             raise KeyError("The key 'detector' is missing from the rule configuration.")
         if not isinstance(conf["detector"], str):
             raise TypeError("The value for 'detector' must be a string.")
-        if conf["detector"] not in deps:
+        if conf["detector"] not in resources:
             raise ValueError(f"Detector {conf['detector']} not found in dependencies.")
-        if not isinstance(deps[conf["detector"]].resource, VisionClient):
+        if not isinstance(resources[conf["detector"]].resource, VisionClient):
             raise TypeError("The detector resource must be of type Vision.")
-        self.detector = cast(VisionClient, deps[conf["detector"]].resource)
+        self.detector = cast(VisionClient, resources[conf["detector"]].resource)
         
         # Check if class_regex is in the configuration and if it's a string
         if "class_regex" not in conf:
@@ -149,7 +147,7 @@ class RuleClassifier(Rule):
     confidence_pct: float
     inverse_pause_secs: int
 
-    def __init__(self, conf: Mapping[str, ValueTypes], deps: Mapping[str, Resource]):
+    def __init__(self, conf: Mapping[str, ValueTypes], resources: Mapping[str, Resource]):
         super().__init__(RuleType.classification)
         
         # Check if the camera is in the configuration and if it's a string
@@ -160,11 +158,11 @@ class RuleClassifier(Rule):
         self.camera_name = conf["camera"]
         
         # Check if the camera is in the dependencies and make sure it's a Camera
-        if conf["camera"] not in deps:
+        if conf["camera"] not in resources:
             raise ValueError(f"Camera {conf['camera']} not found in dependencies.")
-        if not isinstance(deps[conf["camera"]].resource, Camera):
+        if not isinstance(resources[conf["camera"]].resource, Camera):
             raise TypeError("The camera resource must be of type Camera.")
-        self.camera = cast(Camera, deps[conf["camera"]].resource)
+        self.camera = cast(Camera, resources[conf["camera"]].resource)
         
         # Check if classifier is in the configuration and if it's a string
         # Check if the classifier is in the dependencies and make sure it's a VisionClient
@@ -172,11 +170,11 @@ class RuleClassifier(Rule):
             raise KeyError("The key 'classifier' is missing from the rule configuration.")
         if not isinstance(conf["classifier"], str):
             raise TypeError("The value for 'classifier' must be a string.")
-        if conf["classifier"] not in deps:
+        if conf["classifier"] not in resources:
             raise ValueError(f"Classifier {conf['classifier']} not found in dependencies.")
-        if not isinstance(deps[conf["classifier"]].resource, VisionClient):
+        if not isinstance(resources[conf["classifier"]].resource, VisionClient):
             raise TypeError("The classifier resource must be of type Vision.")
-        self.classifier = cast(VisionClient, deps[conf["classifier"]].resource)
+        self.classifier = cast(VisionClient, resources[conf["classifier"]].resource)
         
         # Check if class_regex is in the configuration and if it's a string
         if "class_regex" not in conf:
@@ -211,7 +209,7 @@ class RuleTracker(Rule):
     inverse_pause_secs: int
     pause_on_known_secs: int
 
-    def __init__(self, conf: Mapping[str, ValueTypes], deps: Mapping[str, Resource]):
+    def __init__(self, conf: Mapping[str, ValueTypes], resources: Mapping[str, Resource]):
         super().__init__(RuleType.tracker)
         
         # Check if the camera is in the configuration and if it's a string
@@ -222,11 +220,11 @@ class RuleTracker(Rule):
         self.camera_name = conf["camera"]
         
         # Check if the camera is in the dependencies and make sure it's a Camera
-        if conf["camera"] not in deps:
+        if conf["camera"] not in resources:
             raise ValueError(f"Camera {conf['camera']} not found in dependencies.")
-        if not isinstance(deps[conf["camera"]].resource, Camera):
+        if not isinstance(resources[conf["camera"]].resource, Camera):
             raise TypeError("The camera resource must be of type Camera.")
-        self.camera = cast(Camera, deps[conf["camera"]].resource)
+        self.camera = cast(Camera, resources[conf["camera"]].resource)
         
         # Check if tracker is in the configuration and if it's a string
         # Check if the classifier is in the dependencies and make sure it's a VisionClient
@@ -234,11 +232,11 @@ class RuleTracker(Rule):
             raise KeyError("The key 'tracker' is missing from the rule configuration.")
         if not isinstance(conf["tracker"], str):
             raise TypeError("The value for 'tracker' must be a string.")
-        if conf["tracker"] not in deps:
+        if conf["tracker"] not in resources:
             raise ValueError(f"Tracker {conf['tracker']} not found in dependencies.")
-        if not isinstance(deps[conf["tracker"]].resource, VisionClient):
-            raise TypeError(f"The tracker resource must be of type Vision. Got {type(deps[conf['tracker']].resource)}")
-        self.tracker = cast(VisionClient, deps[conf["tracker"]].resource)
+        if not isinstance(resources[conf["tracker"]].resource, VisionClient):
+            raise TypeError(f"The tracker resource must be of type Vision. Got {type(resources[conf['tracker']].resource)}")
+        self.tracker = cast(VisionClient, resources[conf["tracker"]].resource)
         
         # Check if confidence_pct is in the configuration, if it's a number, and if it's between 0 and 1
         if "confidence_pct" not in conf:
@@ -269,7 +267,7 @@ class RuleCall(Rule):
     result_value: Any
     inverse_pause_secs: int
 
-    def __init__(self, conf: Mapping[str, ValueTypes], deps: Mapping[str, Resource]):
+    def __init__(self, conf: Mapping[str, ValueTypes], resources: Mapping[str, Resource]):
         super().__init__(RuleType.call)
         # Check if the resource is in the configuration and if it's a string
         if "resource" not in conf:
@@ -277,22 +275,21 @@ class RuleCall(Rule):
         if not isinstance(conf["resource"], str):
             raise TypeError("The value for 'resource' must be a string.")
         # Check if the resource is in the dependencies and make sure it's a Resource
-        if conf["resource"] not in deps:
+        if conf["resource"] not in resources:
             raise ValueError(f"Resource {conf['resource']} not found in dependencies.")
-        if not isinstance(deps[conf["resource"]].resource, ResourceBase):
+        if not isinstance(resources[conf["resource"]].resource, ResourceBase):
             raise TypeError("The resource must be of type ResourceBase.")
-        self.resource = deps[conf["resource"]].resource
+        self.resource = resources[conf["resource"]].resource
 
         # Check if the method is in the configuration and if it's a string
         if "method" not in conf:
             raise KeyError("The key 'method' is missing from the rule configuration.")
         if not isinstance(conf["method"], str):
             raise TypeError("The value for 'method' must be a string.")
-        self.method = str(conf["method"])
-
         # Check if the resource has a method with the given name
-        if not hasattr(deps[conf["resource"]].resource, conf["method"]):
+        if not hasattr(self.resource, conf["method"]):
             raise ValueError(f"Method {conf['method']} not found in resource {conf['resource']}.")
+        self.method = str(conf["method"])
         
         # Check if the payload is a string if it's in the configuration
         if "payload" in conf:

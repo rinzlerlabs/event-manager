@@ -7,26 +7,14 @@ from viam.services.generic import Generic as GenericService
 from viam.services.vision import VisionClient
 from viam.components.sensor import Sensor
 
-from src.config import Resource
+from .common import Resource
 
 
 async def call_method(resources:Mapping[str, Resource], name:str, method:str, payload, event):
-    # certainly this could be improved
-    if (resources[name].Type == "component") and (resources[name].SubType == "generic"):
-        resource_dep = resources['_deps'][GenericComponent.get_resource_name(name)]
-        resource = cast(GenericComponent, resource_dep)
-    elif (resources[name].Type == "component") and (resources[name].SubType == "sensor"):
-        resource_dep = resources['_deps'][Sensor.get_resource_name(name)]
-        resource = cast(Sensor, resource_dep)
-    elif (resources[name].Type == "service") and (resources[name].SubType == "generic"):
-        resource_dep = resources['_deps'][GenericService.get_resource_name(name)]
-        resource = cast(GenericService, resource_dep)
-    elif (resources[name].Type == "service") and (resources[name].SubType == "vision"):
-        resource_dep = resources['_deps'][VisionClient.get_resource_name(name)]
-        resource = cast(VisionClient, resource_dep)
-    else:
+    if name not in resources:
         raise Exception(f"Resource {name} not found in resources")
     
+    resource = resources[name]
     method = getattr(resource, method)
 
     if payload:

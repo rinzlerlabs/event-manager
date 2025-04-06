@@ -10,9 +10,18 @@ from .resource_utils import call_method
 from .globals import getParam
 from viam.services.vision import VisionClient, Detection, Classification, Vision
 from viam.media.utils.pil import viam_to_pil_image
-from src.config import Resource
+from src.common import Resource
 from viam.proto.common import ResourceName
 from viam.resource.base import ResourceBase
+
+class RuleLogicType(str, Enum):
+    AND = "AND"
+    OR = "OR"
+    NOR = "NOR"
+    NAND = "NAND"
+    XOR = "XOR"
+    NOT = "NOT"
+    XNOR = "XNOR"
 
 class RuleType(str, Enum):
     detection = "detection"

@@ -23,96 +23,46 @@ from viam.components.power_sensor import PowerSensor
 from viam.components.sensor import Sensor
 from viam.components.servo import Servo
 from viam.services.slam import SLAM
-from viam.services.mlmodel import MLModel
+# from viam.services.mlmodel import MLModel
 from viam.services.motion import Motion
 from viam.services.discovery import Discovery
 from viam.services.navigation import Navigation
 from viam.services.vision import VisionClient
 
-
-from src.events import Event
-
-class Modes(str,Enum):
-    active = "active"
-    inactive = "inactive"
-    none = "none"
-
-class ResourceType(str, Enum):
-    component = "component"
-    service = "service"
-
-class ResourceSubType(str, Enum):
-    # Component types
-    arm = "arm"
-    base = "base"
-    board = "board"
-    button = "button"
-    camera = "camera"
-    encoder = "encoder"
-    gantry = "gantry"
-    generic = "generic"
-    gripper = "gripper"
-    input_controller = "input_controller"
-    motor = "motor"
-    movement_sensor = "movement_sensor"
-    power_sensor = "power_sensor"
-    sensor = "sensor"
-    servo = "servo"
-    switch = "switch"
-    unknown = "unknown"
-    # Service types
-    slam = "slam"
-    mlmodel = "mlmodel"
-    motion = "motion"
-    pose_tracker = "pose_tracker"
-    discovery = "discovery"
-    navigation = "navigation"
-    vision = "vision"
-
-class Resource:
-    Type: ResourceType
-    SubType: ResourceSubType
-    Resource: ResourceBase
-
-    def __init__(self, type: ResourceType, subtype: ResourceSubType, resource: ResourceBase):
-        if not isinstance(type, ResourceType):
-            raise TypeError("The type must be an instance of ResourceType.")
-        if not isinstance(subtype, ResourceSubType):
-            raise TypeError("The subtype must be an instance of ResourceSubType.")
-        if not isinstance(resource, ResourceBase):
-            raise TypeError("The resource must be an instance of ResourceBase.")
-        if not resource:
-            raise ValueError("The resource cannot be None.")
-        self.Type = type
-        self.SubType = subtype
-        self.Resource = resource
+from .events import Event
+from .common import ResourceType, ResourceSubType, Resource, Modes
+# from src.action_class import Action
+# from src.notification_class import (NotificationEmail, NotificationSMS,
+#                                  NotificationWebhookGET)
+# from src.rules import (RuleCall, RuleClassifier, RuleDetector, RuleTime,
+#                     RuleTracker)
 
 class ModeOverride:
-    Mode: Modes
-    Until: float
+    mode: Modes
+    until: float
 
     def __init__(self, config: ComponentConfig):
         mode = config.attributes.fields.get("mode", None)
         if mode is None:
             raise ValueError("The value for 'mode' cannot be None.")
-        self.Mode = Modes(mode.string_value)
+        self.mode = Modes(mode.string_value)
         
         until = config.attributes.fields.get("until", None)
         if until is None:
             raise ValueError("The value for 'until' cannot be None.")
         until_str = until.string_value
-        self.Until = iso8601_to_timestamp(until_str)
+        self.until = iso8601_to_timestamp(until_str)
 
 class Config:
-    Mode: Modes
-    ModeOverride: str|None = None
-    Resources: Mapping[str, Resource]
-    Events: List[Event]
-    SmsModuleName: str|None = None
-    EmailModuleName: str|None = None
-    AppApiKey: str|None = None
-    AppApiKeyId: str|None = None
-    Dependencies: Mapping[ResourceName, ResourceBase] = {}
+    mode: Modes
+    mode_override: str|None = None
+    resources: Mapping[str, Resource]
+    events: List[Event]
+    sms_module_name: str|None = None
+    email_module_name: str|None = None
+    app_api_key: str|None = None
+    app_api_key_id: str|None = None
+    dependencies: Mapping[ResourceName, ResourceBase] = {}
     
     def __init__(self, config: ComponentConfig, dependencies: Mapping[ResourceName, ResourceBase]):
         if not isinstance(config, ComponentConfig):
@@ -123,25 +73,25 @@ class Config:
         # First populate the simple fields
         sms_module = config.attributes.fields.get("sms_module", None)
         if sms_module is not None and sms_module.string_value != "":
-            self.SmsModuleName = sms_module.string_value
+            self.sms_module_name = sms_module.string_value
         email_module = config.attributes.fields.get("email_module", None)
         if email_module is not None and email_module.string_value != "":
-            self.EmailModuleName = email_module.string_value
+            self.email_module_name = email_module.string_value
         app_api_key = config.attributes.fields.get("app_api_key", None)
         if app_api_key is not None and app_api_key.string_value != "":
-            self.AppApiKey = app_api_key.string_value
+            self.app_api_key = app_api_key.string_value
         app_api_key_id = config.attributes.fields.get("app_api_key_id", None)
         if app_api_key_id is not None and app_api_key_id.string_value != "":
-            self.AppApiKeyId = app_api_key_id.string_value
+            self.app_api_key_id = app_api_key_id.string_value
 
-        self.Dependencies = dependencies
+        self.dependencies = dependencies
         
         # Then populate the complex fields
         self.__set_mode(config)
         self.__set_resources(config, dependencies)
-        self.__set_events(config)
+        self.__set_events(config, dependencies)
         
-    def __set_events(self, config: ComponentConfig):
+    def __set_events(self, config: ComponentConfig, dependencies: Mapping[ResourceName, ResourceBase]):
         if "events" not in config.attributes.fields:
             raise KeyError("The key 'events' is missing from the configuration.")
         events_val = config.attributes.fields.get("events", None)
@@ -153,14 +103,14 @@ class Config:
         if events is None:
             raise ValueError("The value for 'events' cannot be None.")
         
-        self.Events = []
+        self.events = []
         for event_struct in events:
             if event_struct.struct_value is None:
                 raise ValueError("The value for 'events' must be a list of dictionaries.")
             event = struct_to_dict(event_struct.struct_value)
             if not isinstance(event, Mapping):
                 raise TypeError("Each event must be a dictionary.")
-            self.Events.append(Event(**event))
+            self.events.append(Event(event,dependencies))
 
     def __set_mode(self, config: ComponentConfig):
         if "mode" not in config.attributes.fields:
@@ -171,7 +121,7 @@ class Config:
         mode_str = mode_val.string_value
         if mode_str not in [mode.value for mode in Modes]:
             raise ValueError(f"The value for 'mode' must be one of the defined modes: {','.join(Modes.__members__.values())}")
-        self.Mode = Modes(mode_str)
+        self.mode = Modes(mode_str)
     
     def __set_resources(self, config: ComponentConfig, deps: Mapping[ResourceName, ResourceBase]):
         if "resources" not in config.attributes.fields:
@@ -184,7 +134,7 @@ class Config:
         if not isinstance(resources, Mapping):
             raise TypeError("The value for 'resources' must be a dictionary.")
         
-        self.Resources = {}
+        self.resources = {}
         for resource_id, resource in resources.items():
             if not isinstance(resource_id, str):
                 raise TypeError("The keys of 'resources' must be strings.")
@@ -194,72 +144,74 @@ class Config:
                 raise KeyError("Each resource must have 'type' and 'subtype' keys.")
             if not isinstance(resource["type"], str) or not isinstance(resource["subtype"], str):
                 raise TypeError("'type' and 'subtype' values must be strings.")
-            depName = getDependencyName(resource["type"], resource["subtype"])
+            depName = getDependencyName(resource["type"], resource["subtype"], resource_id)
             if depName not in deps:
                 raise ValueError(f"Dependency '{depName}' not found in dependencies.")
+            if deps[depName] is None:
+                raise ValueError(f"Dependency '{depName}' cannot be None.")
             
-            self.Resources[resource_id] = Resource(
+            self.resources[resource_id] = Resource(
                 type=ResourceType(resource["type"]),
                 subtype=ResourceSubType(resource["subtype"]),
                 resource=deps[depName]
             )
 
     def get_effective_mode(self):
-        if self.ModeOverride is None:
-            return self.Mode
-        if not isinstance(self.ModeOverride, ModeOverride):
+        if self.mode_override is None:
+            return self.mode
+        if not isinstance(self.mode_override, ModeOverride):
             raise TypeError("The ModeOverride must be an instance of ModeOverride.")
-        if self.ModeOverride.Until < datetime.now().timestamp():
-            return self.Mode
-        return self.ModeOverride.Mode
+        if self.mode_override.until < datetime.now().timestamp():
+            return self.mode
+        return self.mode_override.mode
 
-def getDependencyName(type: str, subtype: str):
+def getDependencyName(type: str, subtype: str, name: str) -> ResourceName:
     if type == ResourceType.component:
         if subtype == ResourceSubType.arm:
-            return Arm.get_resource_name(subtype)
+            return Arm.get_resource_name(name)
         elif subtype == ResourceSubType.base:
-            return Base.get_resource_name(subtype)
+            return Base.get_resource_name(name)
         elif subtype == ResourceSubType.board:
-            return Board.get_resource_name(subtype)
+            return Board.get_resource_name(name)
         elif subtype == ResourceSubType.camera:
-            return Camera.get_resource_name(subtype)
+            return Camera.get_resource_name(name)
         elif subtype == ResourceSubType.encoder:
-            return Encoder.get_resource_name(subtype)
+            return Encoder.get_resource_name(name)
         elif subtype == ResourceSubType.gantry:
-            return Gantry.get_resource_name(subtype)
+            return Gantry.get_resource_name(name)
         elif subtype == ResourceSubType.generic:
-            return GenericComponent.get_resource_name(subtype)
+            return GenericComponent.get_resource_name(name)
         elif subtype == ResourceSubType.gripper:
-            return Gripper.get_resource_name(subtype)
+            return Gripper.get_resource_name(name)
         elif subtype == ResourceSubType.input_controller:
-            return Controller.get_resource_name(subtype)
+            return Controller.get_resource_name(name)
         elif subtype == ResourceSubType.motor:
-            return Motor.get_resource_name(subtype)
+            return Motor.get_resource_name(name)
         elif subtype == ResourceSubType.movement_sensor:
-            return MovementSensor.get_resource_name(subtype)
+            return MovementSensor.get_resource_name(name)
         elif subtype == ResourceSubType.power_sensor:
-            return PowerSensor.get_resource_name(subtype)
+            return PowerSensor.get_resource_name(name)
         elif subtype == ResourceSubType.sensor:
-            return Sensor.get_resource_name(subtype)
+            return Sensor.get_resource_name(name)
         elif subtype == ResourceSubType.servo:
-            return Servo.get_resource_name(subtype)
+            return Servo.get_resource_name(name)
         else:
-            raise ValueError(f"Unknown component subtype: {subtype}")
+            raise ValueError(f"Unknown component subtype: {subtype}, name: {name}")
     elif type == ResourceType.service:
         if subtype == ResourceSubType.slam:
-            return SLAM.get_resource_name(subtype)
-        elif subtype == ResourceSubType.mlmodel:
-            return MLModel.get_resource_name(subtype)
+            return SLAM.get_resource_name(name)
+        # elif subtype == ResourceSubType.mlmodel:
+        #     return MLModel.get_resource_name(name)
         elif subtype == ResourceSubType.motion:
-            return Motion.get_resource_name(subtype)
+            return Motion.get_resource_name(name)
         elif subtype == ResourceSubType.discovery:
-            return Discovery.get_resource_name(subtype)
+            return Discovery.get_resource_name(name)
         elif subtype == ResourceSubType.navigation:
-            return Navigation.get_resource_name(subtype)
+            return Navigation.get_resource_name(name)
         elif subtype == ResourceSubType.vision:
-            return VisionClient.get_resource_name(subtype)
+            return VisionClient.get_resource_name(name)
         else:
-            raise ValueError(f"Unknown service subtype: {subtype}")
+            raise ValueError(f"Unknown or unsupported service subtype: {subtype}, name: {name}")
     else:
         raise ValueError(f"Unknown resource type: {type}")
 

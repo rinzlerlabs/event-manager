@@ -3,7 +3,6 @@ import json
 from google.protobuf.json_format import ParseDict
 from viam.proto.app.robot import ComponentConfig
 
-from src.config import Config, Modes, ResourceType, ResourceSubType, Resource
 from src.event_manager import eventManager
 
 def create_test_component_config() -> ComponentConfig:

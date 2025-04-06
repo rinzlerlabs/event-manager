@@ -123,7 +123,7 @@ class eventManager(Sensor, Reconfigurable):
             stop_event = self.stop_events.pop()
             stop_event.set()
 
-        asyncio.ensure_future(self.manage_events())
+        asyncio.ensure_future(self.manage_events()) 
         return
 
     async def viam_connect(self) -> ViamClient:

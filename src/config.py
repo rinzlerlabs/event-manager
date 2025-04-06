@@ -8,30 +8,9 @@ from viam.utils import ValueTypes, struct_to_dict
 from viam.proto.app.robot import ComponentConfig
 from viam.proto.common import ResourceName
 from viam.resource.base import ResourceBase
-from viam.components.arm import Arm
-from viam.components.base import Base
-from viam.components.board import Board
-from viam.components.camera import Camera
-from viam.components.encoder import Encoder
-from viam.components.gantry import Gantry
-from viam.components.generic import Generic as GenericComponent
-from viam.components.gripper import Gripper
-from viam.components.input.input import Controller
-from viam.components.motor import Motor
-from viam.components.movement_sensor import MovementSensor
-from viam.components.power_sensor import PowerSensor
-from viam.components.sensor import Sensor
-from viam.components.servo import Servo
-from viam.services.slam import SLAM
-# from viam.services.mlmodel import MLModel # Importing this takes a dependency on numpy, not doing that right now.
-from viam.services.motion import Motion
-from viam.services.discovery import Discovery
-from viam.services.navigation import Navigation
-from viam.services.vision import VisionClient
-from viam.services.generic import Generic as GenericService
 
 from .events import Event
-from .common import ResourceType, ResourceSubType, Resource, Modes
+from .common import ResourceType, ResourceSubType, Resource, Modes, get_dependency_resource_name
 
 class ModeOverride:
     mode: Modes
@@ -58,7 +37,6 @@ class Config:
     email_module: ResourceBase|None = None
     app_api_key: str|None = None
     app_api_key_id: str|None = None
-    dependencies: Mapping[ResourceName, ResourceBase] = {}
     
     def __init__(self, config: ComponentConfig, dependencies: Mapping[ResourceName, ResourceBase]):
         if not isinstance(config, ComponentConfig):
@@ -67,20 +45,6 @@ class Config:
             raise ValueError("The configuration cannot be empty.")
         
         # First populate the simple fields
-        sms_module = config.attributes.fields.get("sms_module", None)
-        if sms_module is not None and sms_module.string_value != "":
-            sms_module = sms_module.string_value
-            if sms_module not in dependencies:
-                raise ValueError(f"SMS module '{sms_module}' not found in dependencies.")
-            sms_module_name = getDependencyName(ResourceType.service, ResourceSubType.generic, sms_module)
-            self.sms_module = dependencies[sms_module_name]
-        email_module = config.attributes.fields.get("email_module", None)
-        if email_module is not None and email_module.string_value != "":
-            email_module = email_module.string_value
-            if email_module not in dependencies:
-                raise ValueError(f"Email module '{email_module}' not found in dependencies.")
-            email_module_name = getDependencyName(ResourceType.service, ResourceSubType.generic, email_module)
-            self.email_module = dependencies[email_module_name]
         app_api_key = config.attributes.fields.get("app_api_key", None)
         if app_api_key is not None and app_api_key.string_value != "":
             self.app_api_key = app_api_key.string_value
@@ -88,8 +52,6 @@ class Config:
         if app_api_key_id is not None and app_api_key_id.string_value != "":
             self.app_api_key_id = app_api_key_id.string_value
 
-        self.dependencies = dependencies
-        
         # Then populate the complex fields
         self.__set_mode(config)
         self.__set_resources(config, dependencies)
@@ -130,7 +92,7 @@ class Config:
             raise ValueError(f"The value for 'mode' must be one of the defined modes: {','.join(Modes.__members__.values())}")
         self.mode = Modes(mode_str)
     
-    def __set_resources(self, config: ComponentConfig, deps: Mapping[ResourceName, ResourceBase]):
+    def __set_resources(self, config: ComponentConfig, dependencies: Mapping[ResourceName, ResourceBase]):
         if "resources" not in config.attributes.fields:
             raise KeyError("The key 'resources' is missing from the configuration.")
         resources_val = config.attributes.fields.get("resources", None)
@@ -151,22 +113,38 @@ class Config:
                 raise KeyError("Each resource must have 'type' and 'subtype' keys.")
             if not isinstance(resource["type"], str) or not isinstance(resource["subtype"], str):
                 raise TypeError("'type' and 'subtype' values must be strings.")
-            depName = getDependencyName(resource["type"], resource["subtype"], resource_id)
-            if depName not in deps:
+            depName = get_dependency_resource_name(resource["type"], resource["subtype"], resource_id)
+            if depName not in dependencies:
                 raise ValueError(f"Dependency '{depName}' not found in dependencies.")
-            if deps[depName] is None:
+            if dependencies[depName] is None:
                 raise ValueError(f"Dependency '{depName}' cannot be None.")
             
             self.resources[resource_id] = Resource(
                 type=ResourceType(resource["type"]),
                 subtype=ResourceSubType(resource["subtype"]),
-                resource=deps[depName]
+                resource=dependencies[depName]
             )
+        
+        # Now add the SMS and Email modules
+        sms_module = config.attributes.fields.get("sms_module", None)
+        if sms_module is not None and sms_module.string_value != "":
+            sms_module = sms_module.string_value
+            sms_module_name = get_dependency_resource_name(ResourceType.service, ResourceSubType.generic, sms_module)
+            if sms_module_name not in dependencies:
+                raise ValueError(f"SMS module '{sms_module_name}' not found in dependencies.")
+            self.resources["sms_module"] = Resource(ResourceType.component, ResourceSubType.generic, dependencies[sms_module_name])
+        email_module = config.attributes.fields.get("email_module", None)
+        if email_module is not None and email_module.string_value != "":
+            email_module = email_module.string_value
+            email_module_name = get_dependency_resource_name(ResourceType.service, ResourceSubType.generic, email_module)
+            if email_module_name not in dependencies:
+                raise ValueError(f"Email module '{email_module_name}' not found in dependencies.")
+            self.resources["email_module"] = Resource(ResourceType.component, ResourceSubType.generic, dependencies[email_module_name])
 
     @property
     def mode(self) -> Modes:
         if self.__mode_override is None:
-            return self.mode
+            return self.__mode
         if not isinstance(self.__mode_override, ModeOverride):
             raise TypeError("The ModeOverride must be an instance of ModeOverride.")
         if self.__mode_override.until > datetime.now().timestamp():
@@ -179,56 +157,6 @@ class Config:
         if not isinstance(mode, Modes):
             raise TypeError("The mode must be an instance of Modes.")
         self.__mode = mode
-
-def getDependencyName(type: str, subtype: str, name: str) -> ResourceName:
-    if type == ResourceType.component:
-        if subtype == ResourceSubType.arm:
-            return Arm.get_resource_name(name)
-        elif subtype == ResourceSubType.base:
-            return Base.get_resource_name(name)
-        elif subtype == ResourceSubType.board:
-            return Board.get_resource_name(name)
-        elif subtype == ResourceSubType.camera:
-            return Camera.get_resource_name(name)
-        elif subtype == ResourceSubType.encoder:
-            return Encoder.get_resource_name(name)
-        elif subtype == ResourceSubType.gantry:
-            return Gantry.get_resource_name(name)
-        elif subtype == ResourceSubType.generic:
-            return GenericComponent.get_resource_name(name)
-        elif subtype == ResourceSubType.gripper:
-            return Gripper.get_resource_name(name)
-        elif subtype == ResourceSubType.input_controller:
-            return Controller.get_resource_name(name)
-        elif subtype == ResourceSubType.motor:
-            return Motor.get_resource_name(name)
-        elif subtype == ResourceSubType.movement_sensor:
-            return MovementSensor.get_resource_name(name)
-        elif subtype == ResourceSubType.power_sensor:
-            return PowerSensor.get_resource_name(name)
-        elif subtype == ResourceSubType.sensor:
-            return Sensor.get_resource_name(name)
-        elif subtype == ResourceSubType.servo:
-            return Servo.get_resource_name(name)
-        else:
-            raise ValueError(f"Unknown component subtype: {subtype}, name: {name}")
-    elif type == ResourceType.service:
-        if subtype == ResourceSubType.slam:
-            return SLAM.get_resource_name(name)
-        # elif subtype == ResourceSubType.mlmodel:
-        #     return MLModel.get_resource_name(name)
-        elif subtype == ResourceSubType.motion:
-            return Motion.get_resource_name(name)
-        elif subtype == ResourceSubType.discovery:
-            return Discovery.get_resource_name(name)
-        elif subtype == ResourceSubType.navigation:
-            return Navigation.get_resource_name(name)
-        elif subtype == ResourceSubType.vision:
-            return VisionClient.get_resource_name(name)
-        else:
-            raise ValueError(f"Unknown or unsupported service subtype: {subtype}, name: {name}")
-    else:
-        raise ValueError(f"Unknown resource type: {type}")
 
 def iso8601_to_timestamp(iso8601_string):
     # Regular expression to match ISO8601 format

@@ -6,8 +6,8 @@
     },
     "app_api_key": "daifdkaddkdfhshfeasw",
     "app_api_key_id": "weygwegqeyygadydagfd",
-    "email_module": "shared-alerting:email",
-    "sms_module": "shared-alerting:sms",
+    "email_module": "email",
+    "sms_module": "sms",
     "resources": {
         "kasa_plug_1": {
             "type": "component",

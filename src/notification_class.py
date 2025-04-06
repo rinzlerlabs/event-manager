@@ -13,31 +13,33 @@ class Notification:
             raise TypeError("The type must be an instance of NotificationType.")
         self.type = type
 
-class NotificationSMS(Notification):
-    to: str
-    preset: str
+class ImageNotification(Notification):
     image: Image.Image
     include_image: bool = True
-    def __init__(self, **kwargs):
+    def __init__(self, type: NotificationType, **kwargs):
         super().__init__(NotificationType.sms)
         for key, value in kwargs.items():
             self.__dict__[key] = value
 
-class NotificationEmail(Notification):
+class NotificationSMS(ImageNotification):
     to: str
     preset: str
-    image: Image.Image
-    include_image: bool = False
-    
     def __init__(self, **kwargs):
-        super().__init__(NotificationType.email)
+        super().__init__(NotificationType.sms, **kwargs)
         for key, value in kwargs.items():
             self.__dict__[key] = value
 
-class NotificationWebhookGET(Notification):
-    url: str
-    image: Image.Image
+class NotificationEmail(ImageNotification):
+    to: str
+    preset: str
     def __init__(self, **kwargs):
-        super().__init__(NotificationType.webhook_get)
+        super().__init__(NotificationType.email, **kwargs)
+        for key, value in kwargs.items():
+            self.__dict__[key] = value
+
+class NotificationWebhookGET(ImageNotification):
+    url: str
+    def __init__(self, **kwargs):
+        super().__init__(NotificationType.webhook_get, **kwargs)
         for key, value in kwargs.items():
             self.__dict__[key] = value

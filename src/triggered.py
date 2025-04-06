@@ -1,22 +1,20 @@
 import bson
 import asyncio
 
-from PIL import Image
 from viam.proto.app.data import Filter
 from viam.components.camera.client import CameraClient
 from viam.components.generic.client import GenericClient
 from viam.app.viam_client import ViamClient
 from viam.gen.app.data.v1.data_pb2 import ORDER_DESCENDING
 from viam.proto.app.data import BinaryID, Order
-from typing import cast, Any
+from viam.utils import ValueTypes
+from typing import cast, Any, Mapping
 from datetime import datetime, timedelta, timezone
 from .logger import LOGGER
 
 import io
 
-async def request_capture(event: Any):
-    vs = _get_video_store(event.video_capture_resource, resources)
-
+async def request_capture(event: Any) -> Mapping[str, ValueTypes]|None:
     await asyncio.sleep(event.event_video_capture_padding_secs)
     current_time = datetime.now()
     # go back a second to ensure its not the current second
@@ -39,7 +37,10 @@ async def request_capture(event: Any):
     }
     
     try:
-        store_result = await vs.do_command( store_args )
+        if event.video_capture_resource == None:
+            LOGGER.error("video_capture_resource is None")
+            return
+        store_result:Mapping[str, ValueTypes] = await event.video_capture_resource.do_command( store_args )
         return store_result
     except Exception as e:
         LOGGER.error(e)
@@ -103,19 +104,3 @@ def _name_clean(string):
 
 def _label(event_name, cam_name, last_triggered):
     return _name_clean(f"SAVCAM--{event_name}--{cam_name}--{str(last_triggered)}")
-
-def _get_video_store(name, resources) -> GenericClient|CameraClient:
-    # newer versions of video-store resource are Generic, older are Camera
-    is_generic = True
-    resource_name = GenericClient.get_resource_name(name)
-    if resource_name not in resources['_deps']:
-        resource_name = CameraClient.get_resource_name(name)
-        is_generic = False
-    actual = resources['_deps'][resource_name]
-    if resources.get(actual) == None:
-        # initialize if it is not already
-        if is_generic:
-            resources[actual] = cast(GenericClient, actual)
-        else:
-            resources[actual] = cast(CameraClient, actual)
-    return resources[actual]

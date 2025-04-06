@@ -198,7 +198,7 @@ class eventManager(Sensor, Reconfigurable):
                         for n in event.notifications:
                             if triggered_image != None:
                                 n.image = triggered_image
-                            await notifications.notify(event, n, event_resources)
+                            await notifications.notify(event, n, self.config.resources)
 
                     # try to respect detection_hz as desired speed of detections
                     elapsed = (datetime.now() - start_time).total_seconds()
@@ -214,9 +214,9 @@ class eventManager(Sensor, Reconfigurable):
                     # only poll for SMS if there are actions configured for this event
                     # TODO: only poll if actions are checking for SMS responses
                     if len(event.actions):
-                        sms_message = await notifications.check_sms_response(event.notifications, event.last_triggered, event_resources)
+                        sms_message = await notifications.check_sms_response(event.notifications, event.last_triggered, self.config.resources)
                     for action in event.actions:
-                        await self.event_action(event, action, sms_message, event_resources)
+                        await self.event_action(event, action, sms_message, self.config.resources)
                     await asyncio.sleep(1)
                 else:
                     # sleep if we know we are not currently checking for this event

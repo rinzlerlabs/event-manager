@@ -2,6 +2,27 @@ from enum import Enum
 
 from viam.proto.common import ResourceName
 from viam.resource.base import ResourceBase
+from viam.components.arm import Arm
+from viam.components.base import Base
+from viam.components.board import Board
+from viam.components.camera import Camera
+from viam.components.encoder import Encoder
+from viam.components.gantry import Gantry
+from viam.components.generic import Generic as GenericComponent
+from viam.components.gripper import Gripper
+from viam.components.input.input import Controller
+from viam.components.motor import Motor
+from viam.components.movement_sensor import MovementSensor
+from viam.components.power_sensor import PowerSensor
+from viam.components.sensor import Sensor
+from viam.components.servo import Servo
+from viam.services.slam import SLAM
+# from viam.services.mlmodel import MLModel # Importing this takes a dependency on numpy, not doing that right now.
+from viam.services.motion import Motion
+from viam.services.discovery import Discovery
+from viam.services.navigation import Navigation
+from viam.services.vision import VisionClient
+from viam.services.generic import Generic as GenericService
 
 class ResourceType(str, Enum):
     component = "component"
@@ -64,3 +85,55 @@ class Modes(str,Enum):
     active = "active"
     inactive = "inactive"
     none = "none"
+
+def get_dependency_resource_name(type: str, subtype: str, name: str) -> ResourceName:
+    if type == ResourceType.component:
+        if subtype == ResourceSubType.arm:
+            return Arm.get_resource_name(name)
+        elif subtype == ResourceSubType.base:
+            return Base.get_resource_name(name)
+        elif subtype == ResourceSubType.board:
+            return Board.get_resource_name(name)
+        elif subtype == ResourceSubType.camera:
+            return Camera.get_resource_name(name)
+        elif subtype == ResourceSubType.encoder:
+            return Encoder.get_resource_name(name)
+        elif subtype == ResourceSubType.gantry:
+            return Gantry.get_resource_name(name)
+        elif subtype == ResourceSubType.generic:
+            return GenericComponent.get_resource_name(name)
+        elif subtype == ResourceSubType.gripper:
+            return Gripper.get_resource_name(name)
+        elif subtype == ResourceSubType.input_controller:
+            return Controller.get_resource_name(name)
+        elif subtype == ResourceSubType.motor:
+            return Motor.get_resource_name(name)
+        elif subtype == ResourceSubType.movement_sensor:
+            return MovementSensor.get_resource_name(name)
+        elif subtype == ResourceSubType.power_sensor:
+            return PowerSensor.get_resource_name(name)
+        elif subtype == ResourceSubType.sensor:
+            return Sensor.get_resource_name(name)
+        elif subtype == ResourceSubType.servo:
+            return Servo.get_resource_name(name)
+        else:
+            raise ValueError(f"Unknown component subtype: {subtype}, name: {name}")
+    elif type == ResourceType.service:
+        if subtype == ResourceSubType.slam:
+            return SLAM.get_resource_name(name)
+        # elif subtype == ResourceSubType.mlmodel:
+        #     return MLModel.get_resource_name(name)
+        elif subtype == ResourceSubType.motion:
+            return Motion.get_resource_name(name)
+        elif subtype == ResourceSubType.discovery:
+            return Discovery.get_resource_name(name)
+        elif subtype == ResourceSubType.navigation:
+            return Navigation.get_resource_name(name)
+        elif subtype == ResourceSubType.vision:
+            return VisionClient.get_resource_name(name)
+        elif subtype == ResourceSubType.generic:
+            return GenericService.get_resource_name(name)
+        else:
+            raise ValueError(f"Unknown or unsupported service subtype: {subtype}, name: {name}")
+    else:
+        raise ValueError(f"Unknown resource type: {type}")

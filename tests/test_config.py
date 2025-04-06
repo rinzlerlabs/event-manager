@@ -42,6 +42,9 @@ def test_config_parsing():
         resource_name_from_string("rdk:service:vision/tracker1"): Vision(name="tracker1", channel=None), #type:ignore
         resource_name_from_string("rdk:service:vision/person_detector"): Vision(name="person_detector", channel=None), #type:ignore
         resource_name_from_string("rdk:component:sensor/stuff_sensor"): Sensor(name="stuff_sensor", channel=None), #type:ignore
+        resource_name_from_string("rdk:service:generic/sms"): Generic(name="sms", channel=None), #type:ignore
+        resource_name_from_string("rdk:service:generic/email"): Generic(name="email", channel=None), #type:ignore
+        resource_name_from_string("rdk:component:generic/video_capture"): Generic(name="video_capture", channel=None), #type:ignore
     }
 
     # Parse the config

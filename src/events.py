@@ -1,6 +1,7 @@
 from enum import Enum
 from typing import Mapping, cast
 
+from viam.resource.base import ResourceBase
 from viam.utils import ValueTypes
 
 from .action_class import Action
@@ -8,7 +9,7 @@ from .notification_class import (NotificationEmail, NotificationSMS, Notificatio
                                  NotificationWebhookGET)
 from .rules import (RuleCall, RuleClassifier, RuleDetector, RuleTime,
                     RuleTracker, RuleLogicType, RuleType)
-from .common import Resource, Modes
+from .common import Resource, ResourceType, ResourceSubType, Modes, get_dependency_resource_name
 
 class EventState(str, Enum):
     setup = "setup"
@@ -21,7 +22,7 @@ class Event():
     name: str
     state: EventState = EventState.paused
     capture_video: bool = False
-    video_capture_resource: str
+    video_capture_resource: ResourceBase|None = None
     event_video_capture_padding_secs: float = 10
     pause_alerting_on_event_secs: float = 300
     detection_hz: int = 5
@@ -62,7 +63,11 @@ class Event():
         if "video_capture_resource" in config:
             if not isinstance(config["video_capture_resource"], str):
                 raise TypeError("The value for 'video_capture_resource' must be a string.")
-            self.video_capture_resource = config["video_capture_resource"]
+            if dependencies[config["video_capture_resource"]] is None:
+                raise ValueError(f"Dependency '{config['video_capture_resource']}' cannot be None.")
+            if dependencies[config["video_capture_resource"]].type != ResourceType.component or (dependencies[config["video_capture_resource"]].sub_type != ResourceSubType.camera and dependencies[config["video_capture_resource"]].sub_type != ResourceSubType.generic):
+                raise ValueError(f"Dependency '{config['video_capture_resource']}' must be a camera or generic component.")
+            self.video_capture_resource = dependencies["video_capture_resource"].resource
         
         if "event_video_capture_padding_secs" in config:
             if not isinstance(config["event_video_capture_padding_secs"], (int,float)):

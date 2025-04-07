@@ -11,7 +11,7 @@ from PIL import Image
 from . import events
 from .common import Resource
 from .logger import LOGGER
-from .notification_class import (NotificationEmail,
+from .notificationClass import (NotificationEmail,
                                  NotificationSMS,
                                  NotificationWebhookGET)
 

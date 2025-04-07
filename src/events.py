@@ -4,9 +4,9 @@ from typing import Any, Mapping, cast
 from viam.resource.base import ResourceBase
 from viam.utils import ValueTypes
 
-from .action_class import Action
+from .actionClass import Action
 from .common import (Modes, Resource, ResourceSubType, ResourceType)
-from .notification_class import (NotificationEmail, NotificationSMS,
+from .notificationClass import (NotificationEmail, NotificationSMS,
                                  NotificationType, NotificationWebhookGET)
 from .rules import (RuleCall, RuleClassifier, RuleDetector, RuleLogicType,
                     RuleTime, RuleTracker, RuleType)

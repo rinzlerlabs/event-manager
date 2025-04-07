@@ -4,7 +4,6 @@ from viam.utils import ValueTypes
 
 from .common import Resource, get_resource_from_resource_map_by_name
 
-
 class Action():
     resource: Resource
     method: str

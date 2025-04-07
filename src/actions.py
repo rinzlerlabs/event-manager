@@ -1,10 +1,10 @@
 import re
 import time
 
-from .action_class import Action
+from .actionClass import Action
 from .events import Event
 from .logger import LOGGER
-from .resource_utils import call_method
+from .resourceUtils import call_method
 
 
 def flip_action_status(event:Event, direction:bool):

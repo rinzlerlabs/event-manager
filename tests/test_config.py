@@ -14,7 +14,7 @@ from typing import Mapping
 from unittest.mock import MagicMock
 
 from src.config import Config, Modes, ResourceType, ResourceSubType
-from src.event_manager import eventManager
+from src.eventManager import eventManager
 from src.rules import RuleLogicType, RuleType, RuleCall, Operator
 
 def create_test_component_config() -> ComponentConfig:

@@ -15,7 +15,7 @@ from src.common import Resource
 
 from . import logic
 from .logger import LOGGER
-from .resource_utils import call_method
+from .resourceUtils import call_method
 
 
 class Operator(Enum):

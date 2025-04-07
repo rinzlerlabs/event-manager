@@ -3,3 +3,6 @@ pillow
 pydot~=3.0.2
 pyinstaller~=6.10.0
 pymongo
+pytest
+pytest-asyncio
+phonenumbers~=9.0.2

@@ -1,0 +1,7 @@
+{
+    "response_match": "1",
+    "when_secs": 60,
+    "resource": "kasa_plug_2",
+    "method": "do_command",
+    "payload": "{'action' : 'toggle_on'}"
+}

@@ -4,6 +4,7 @@ import time
 import traceback
 from datetime import datetime, timedelta, timezone
 from typing import (Any, ClassVar, Dict, Mapping, Optional, cast)
+from logging import Logger
 
 import pydot
 from typing_extensions import Self
@@ -20,19 +21,17 @@ from viam.utils import (SensorReading, ValueTypes, from_dm_from_extra,
                         struct_to_dict)
 
 from . import actions, events, notifications, rules, triggered
-from .config import Config, Modes
-from .logger import LOGGER
-
+from .config import Config
 
 class eventManager(Sensor, Reconfigurable):
-    MODEL: ClassVar[Model] = Model(
-        ModelFamily("viam", "event-manager"), "eventing")
+    MODEL: ClassVar[Model] = Model(ModelFamily("viam", "event-manager"), "eventing")
 
     config: Config
     name: str
     dm_sent_status = {}
     event_states: list[events.Event] = []
     stop_events = []
+    logger: Logger
 
     # Constructor
     @classmethod
@@ -66,10 +65,13 @@ class eventManager(Sensor, Reconfigurable):
     def reconfigure(self, config: ComponentConfig, dependencies: Mapping[ResourceName, ResourceBase]):
         self.name = config.name
 
+        if self.logger is None:
+            raise ValueError("Logger is not set. The logger is injected by viam-python-sdk, if it's missing, this is probably a bug in the SDK.")
+
         # reset event states
         self.event_states = []
 
-        self.config = Config(config, dependencies)
+        self.config = Config(self.logger, config, dependencies)
 
         while self.stop_events:
             stop_event = self.stop_events.pop()
@@ -123,12 +125,12 @@ class eventManager(Sensor, Reconfigurable):
                     event.triggered_label = ""
                     event.triggered_rules = []
 
-                    actions.flip_action_status(event, False)
+                    event.flip_action_status(False)
 
                     rule_results:list[dict[str, Any]] = []
                     for rule in event.rules:
                         self.logger.debug(rule)
-                        result = await rules.eval_rule(rule)
+                        result = await rule.eval()
                         if result["triggered"] == True:
                             event.sequence_count_current = event.sequence_count_current + 1
                         else:
@@ -188,8 +190,8 @@ class eventManager(Sensor, Reconfigurable):
 
                         event.triggered_rules = rule_results
 
-                        for n in event.notifications:
-                            await notifications.notify(event, n, self.config.resources,triggered_image)
+                        for n in event.notifiers:
+                            await n.notify(event.name, event.triggered_label, event.triggered_camera, triggered_image)
 
                     # try to respect detection_hz as desired speed of detections
                     elapsed = (datetime.now() - start_time).total_seconds()
@@ -204,8 +206,11 @@ class eventManager(Sensor, Reconfigurable):
                     sms_message = ""
                     # only poll for SMS if there are actions configured for this event
                     # TODO: only poll if actions are checking for SMS responses
+                    #   # I think this is moot with the code below filtering for sms notifiers before doing anything
                     if len(event.actions):
-                        sms_message = await notifications.check_sms_response(event.notifications, event.last_triggered, self.config.resources)
+                        sms_notifiers = [n for n in event.notifiers if isinstance(n, notifications.SmsNotifier)]
+                        for n in sms_notifiers:
+                            sms_message = await n.check_sms_response(event.last_triggered) # This is a last one wins case, if there are multiple sms notifiers, we are going to have issues
                     for action in event.actions:
                         await self.event_action(event, action, sms_message)
                     await asyncio.sleep(1)
@@ -220,14 +225,14 @@ class eventManager(Sensor, Reconfigurable):
         self.logger.info("Ending event check loop for " + event.name)
 
     async def event_action(self, event:events.Event, action:actions.Action, message:str|None):
-        should_action = await actions.eval_action(event, action, message)
+        should_action = action.should_action(event.last_triggered, message)
         if should_action:
             if message is not None and message != "":
                 # once we get a valid message, no other actions should be taken
                 event.actions_paused = True
                 event.state = events.EventState.paused
                 event.pause_reason = "sms"
-            await actions.do_action(event, action)
+            await action.do_action(event.name, event.triggered_label, event.triggered_camera)
 
     async def do_command(
         self,
@@ -252,7 +257,7 @@ class eventManager(Sensor, Reconfigurable):
                 if self.app_client is None:
                     result["triggered"] = { "error": "app_api_key and app_api_key_id as well as data capture on GetReadings() for this module must be configured" }
                 else:
-                    result["triggered"] = await triggered.get_triggered_cloud(self.app_client, self.name, org_id, num=args.get("number", 5), event_name=args.get("event", None))
+                    result["triggered"] = await triggered.get_triggered_cloud(self.logger, self.app_client, self.name, org_id, num=args.get("number", 5), event_name=args.get("event", None))
             elif name == "delete_triggered_video":
                 if not isinstance(args, dict):
                     raise ValueError("args must be a dictionary")

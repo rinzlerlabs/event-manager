@@ -2,13 +2,12 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
+from logging import Logger
+
 import bson
 from viam.app.viam_client import ViamClient
 from viam.proto.app.data import BinaryID, Filter, Order
 from viam.utils import ValueTypes
-
-from .logger import LOGGER
-
 
 async def request_capture(event: Any) -> Mapping[str, ValueTypes]|None:
     await asyncio.sleep(event.event_video_capture_padding_secs)
@@ -34,14 +33,14 @@ async def request_capture(event: Any) -> Mapping[str, ValueTypes]|None:
     
     try:
         if event.video_capture_resource == None:
-            LOGGER.error("video_capture_resource is None")
+            event.logger.error("video_capture_resource is None")
             return
         store_result:Mapping[str, ValueTypes] = await event.video_capture_resource.do_command( store_args )
         return store_result
     except Exception as e:
-        LOGGER.error(e)
+        event.logger.error(e)
 
-async def get_triggered_cloud(app_client:ViamClient, event_manager_name:str,organization_id:str, event_name:str|None=None, num:int=5)-> Any: # This return value is a cluster...we need to fix this
+async def get_triggered_cloud(logger:Logger, app_client:ViamClient, event_manager_name:str,organization_id:str, event_name:str|None=None, num:int=5)-> Any: # This return value is a cluster...we need to fix this
     if app_client is None:
         raise ValueError("app_client is None")
     filter_args = {}
@@ -78,12 +77,12 @@ async def get_triggered_cloud(app_client:ViamClient, event_manager_name:str,orga
     # now try to match any videos based on event timestamp
     videos = await app_client.data_client.binary_data_by_filter(filter=Filter(**filter_args), include_binary_data=False, limit=100, sort_order=Order.ORDER_DESCENDING)
     for video in videos[0]:
-        LOGGER.debug(video.metadata)
+        logger.debug(video.metadata)
         spl = video.metadata.file_name.split('--')
         if len(spl) > 3:
             vtime = datetime.fromtimestamp( int(float(spl[3].replace('.mp4',''))), timezone.utc).isoformat() + 'Z'
             if vtime in matched_index_by_dt:
-                LOGGER.debug(video)
+                logger.debug(video)
                 matched[matched_index_by_dt[vtime]]["video_id"] = video.metadata.id
     return matched
 

@@ -1,26 +1,27 @@
 import re
 from datetime import datetime, timedelta, timezone
 from typing import List, Mapping
+from logging import Logger
 
 from viam.proto.app.robot import ComponentConfig
 from viam.proto.common import ResourceName
 from viam.resource.base import ResourceBase
 from viam.utils import struct_to_dict
 
-from .common import (Modes, Resource, ResourceSubType, ResourceType,
+from .common import (Resource, ResourceSubType, ResourceType,
                      get_dependency_resource_name)
 from .events import Event
 
 
 class ModeOverride:
-    mode: Modes
+    mode: str
     until: float
 
     def __init__(self, config: ComponentConfig):
         mode = config.attributes.fields.get("mode", None)
         if mode is None:
             raise ValueError("The value for 'mode' cannot be None.")
-        self.mode = Modes(mode.string_value)
+        self.mode = mode.string_value
         
         until = config.attributes.fields.get("until", None)
         if until is None:
@@ -29,16 +30,22 @@ class ModeOverride:
         self.until = iso8601_to_timestamp(until_str)
 
 class Config:
-    __mode: Modes
+    __mode: str
     __mode_override: str|None = None
-    resources: Mapping[str, Resource]
     events: List[Event]
     sms_module: ResourceBase|None = None
     email_module: ResourceBase|None = None
     app_api_key: str|None = None
     app_api_key_id: str|None = None
+    logger: Logger
     
-    def __init__(self, config: ComponentConfig, dependencies: Mapping[ResourceName, ResourceBase]):
+    def __init__(self, logger:Logger, config: ComponentConfig, dependencies: Mapping[ResourceName, ResourceBase]):
+        if logger is None:
+            raise ValueError("The logger cannot be None.")
+        if not isinstance(logger, Logger):
+            raise TypeError("The logger must be an instance of Logger.")
+        self.logger = logger
+
         if not isinstance(config, ComponentConfig):
             raise TypeError("The configuration must be a dictionary.")
         if not config:
@@ -54,13 +61,17 @@ class Config:
 
         # Then populate the complex fields
         self.__set_mode(config)
-        self.__set_resources(config, dependencies)
+        resources = self.get_resources(config, dependencies)
 
         # This must be done after __set_resources
         # because __set_events uses self.resources
-        self.__set_events(config, self.resources)
+        self.__set_events(logger, config, resources)
         
-    def __set_events(self, config: ComponentConfig, resources: Mapping[str, Resource]):
+    def __set_events(self, logger:Logger, config: ComponentConfig, resources: Mapping[str, Resource]):
+        if logger is None:
+            raise ValueError("The logger cannot be None.")
+        if not isinstance(logger, Logger):
+            raise TypeError("The logger must be an instance of Logger.")
         if "events" not in config.attributes.fields:
             raise KeyError("The key 'events' is missing from the configuration.")
         events_val = config.attributes.fields.get("events", None)
@@ -79,7 +90,7 @@ class Config:
             event = struct_to_dict(event_struct.struct_value)
             if not isinstance(event, Mapping):
                 raise TypeError("Each event must be a dictionary.")
-            self.events.append(Event(event, resources))
+            self.events.append(Event(logger, event, resources))
 
     def __set_mode(self, config: ComponentConfig):
         if "mode" not in config.attributes.fields:
@@ -88,23 +99,21 @@ class Config:
         if mode_val is None:
             raise ValueError("The value for 'mode' cannot be None.")
         mode_str = mode_val.string_value
-        if mode_str not in [mode.value for mode in Modes]:
-            raise ValueError(f"The value for 'mode' must be one of the defined modes: {','.join(Modes.__members__.values())}")
-        self.mode = Modes(mode_str)
+        self.mode = mode_str
     
-    def __set_resources(self, config: ComponentConfig, dependencies: Mapping[ResourceName, ResourceBase]):
+    def get_resources(self, config: ComponentConfig, dependencies: Mapping[ResourceName, ResourceBase]) -> Mapping[str, Resource]:
         if "resources" not in config.attributes.fields:
             raise KeyError("The key 'resources' is missing from the configuration.")
         resources_val = config.attributes.fields.get("resources", None)
         if resources_val is None:
             raise ValueError("The value for 'resources' cannot be None.")
         
-        resources = struct_to_dict(resources_val.struct_value)
-        if not isinstance(resources, Mapping):
+        required_resources = struct_to_dict(resources_val.struct_value)
+        if not isinstance(required_resources, Mapping):
             raise TypeError("The value for 'resources' must be a dictionary.")
         
-        self.resources = {}
-        for resource_id, resource in resources.items():
+        resources = {}
+        for resource_id, resource in required_resources.items():
             if not isinstance(resource_id, str):
                 raise TypeError("The keys of 'resources' must be strings.")
             if not isinstance(resource, Mapping):
@@ -119,7 +128,7 @@ class Config:
             if dependencies[depName] is None:
                 raise ValueError(f"Dependency '{depName}' cannot be None.")
             
-            self.resources[resource_id] = Resource(
+            resources[resource_id] = Resource(
                 type=ResourceType(resource["type"]),
                 subtype=ResourceSubType(resource["subtype"]),
                 resource=dependencies[depName]
@@ -132,17 +141,19 @@ class Config:
             sms_module_name = get_dependency_resource_name(ResourceType.service, ResourceSubType.generic, sms_module)
             if sms_module_name not in dependencies:
                 raise ValueError(f"SMS module '{sms_module_name}' not found in dependencies.")
-            self.resources["sms_module"] = Resource(ResourceType.component, ResourceSubType.generic, dependencies[sms_module_name])
+            resources["sms_module"] = Resource(ResourceType.component, ResourceSubType.generic, dependencies[sms_module_name])
         email_module = config.attributes.fields.get("email_module", None)
         if email_module is not None and email_module.string_value != "":
             email_module = email_module.string_value
             email_module_name = get_dependency_resource_name(ResourceType.service, ResourceSubType.generic, email_module)
             if email_module_name not in dependencies:
                 raise ValueError(f"Email module '{email_module_name}' not found in dependencies.")
-            self.resources["email_module"] = Resource(ResourceType.component, ResourceSubType.generic, dependencies[email_module_name])
+            resources["email_module"] = Resource(ResourceType.component, ResourceSubType.generic, dependencies[email_module_name])
+        
+        return resources
 
     @property
-    def mode(self) -> Modes:
+    def mode(self) -> str:
         if self.__mode_override is None:
             return self.__mode
         if not isinstance(self.__mode_override, ModeOverride):
@@ -153,9 +164,9 @@ class Config:
         return self.__mode
     
     @mode.setter
-    def mode(self, mode: Modes):
-        if not isinstance(mode, Modes):
-            raise TypeError("The mode must be an instance of Modes.")
+    def mode(self, mode: str):
+        if not isinstance(mode, str):
+            raise TypeError("The mode must be an instance of string.")
         self.__mode = mode
 
 def iso8601_to_timestamp(iso8601_string):

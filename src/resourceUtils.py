@@ -1,39 +1,40 @@
 import json
-from typing import Any
+from typing import Any, Callable
 
 from viam.resource.base import ResourceBase
 
-
-# TODO: Need to resolve the circular import issue with events, until then "event" must be untyped
-async def call_method(resource:ResourceBase, method:str, payload:Any, event:Any) -> Any:
+async def call_method(method: Callable, payload:str, event_name:str|None=None, trigger_label:str|None=None, trigger_source:str|None=None) -> Any:
     """
-    Calls a method on a resource with the given payload.
+    Calls a method with the given payload.
     Args:
-        resource (ResourceBase): The resource to call the method on.
-        method (str): The name of the method to call.
+        method (Callable): The method to call.
         payload (str): The payload to send to the method.
-        event (Event): The event that triggered the action.
+        event_name (str): The name of the event that triggered the action.
+        trigger_label (str): The label of the trigger.
+        trigger_source (str): The source of the trigger.
     Returns:
         The result of the method call.
     Raises:
         ValueError: If the method is not found or is not callable.
     """
-    method = getattr(resource, method)
     if not method:
-        raise ValueError(f"Method {method} not found on resource {resource.name}")
+        raise ValueError(f"Method {method} not found")
     if not callable(method):
-        raise ValueError(f"Method {method} is not callable on resource {resource.name}")
+        raise ValueError(f"Method {method} is not callable")
 
     if payload:
         # we don't want to alter action.payload directly as it will be used as a template repeatedly
         payload_copy = payload
 
-        if (event):
-            # At some point we might want other things to be template variables, for now just label and event name
-            payload_copy = payload_copy.replace('<<triggered_label>>', event.triggered_label)
-            payload_copy = payload_copy.replace('<<triggered_camera>>', event.triggered_camera)
-            payload_copy = payload_copy.replace('<<event_name>>', event.name)
-        
-            return await method(json.loads(payload_copy.replace("'", "\"")))
+        # At some point we might want other things to be template variables, for now just label and event name
+        if trigger_label is not None:
+            payload_copy = payload_copy.replace('<<triggered_label>>', trigger_label)
+        if trigger_source is not None:
+            payload_copy = payload_copy.replace('<<triggered_camera>>', trigger_source)
+        if event_name is not None:
+            payload_copy = payload_copy.replace('<<event_name>>', event_name)
+        payload_copy = payload_copy.replace("'", "\"")
+
+        return await method(json.loads(payload_copy))
     else:
         return await method()

@@ -92,7 +92,7 @@
                 {
                     "type": "sms",
                     "to": [
-                        "123-456-7890"
+                        "212-555-0123"
                     ],
                     "preset": "alert"
                 },
@@ -158,7 +158,7 @@
                 {
                     "type": "sms",
                     "to": [
-                        "test@somedomain.com"
+                        "212-555-0123"
                     ],
                     "include_image": false,
                     "preset": "alert"

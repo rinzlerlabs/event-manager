@@ -1,0 +1,75 @@
+{
+    "name": "a new person camera 2",
+    "modes": [
+        "active"
+    ],
+    "capture_video": true,
+    "video_capture_resource": "vcam1",
+    "event_video_capture_padding_secs": 10,
+    "detection_hz": 2,
+    "pause_alerting_on_event_secs": 120,
+    "rule_logic_type": "AND",
+    "rules": [
+        {
+            "type": "tracker",
+            "camera": "cam1",
+            "tracker": "tracker1",
+            "pause_on_known_secs": 900,
+            "confidence_pct": 0.6
+        },
+        {
+            "type": "time",
+            "start_hour": "10",
+            "end_hour": "20"
+        },
+        {
+            "type": "time",
+            "ranges": [
+                {
+                    "start_hour": "12",
+                    "end_hour": "14"
+                }
+            ]
+        },
+        {
+            "type": "time",
+            "ranges": {
+                "start_hour": "14",
+                "end_hour": "18"
+            }
+        }
+    ],
+    "notifications": [
+        {
+            "type": "sms",
+            "to": [
+                "212-555-0123"
+            ],
+            "include_image": false,
+            "preset": "alert"
+        }
+    ],
+    "actions": [
+        {
+            "response_match": "1",
+            "when_secs": 60,
+            "resource": "kasa_plug_2",
+            "method": "do_command",
+            "payload": "{'action' : 'toggle_on'}"
+        },
+        {
+            "response_match": "(2|3)",
+            "when_secs": -1,
+            "resource": "kasa_plug_2",
+            "method": "do_command",
+            "payload": "{'action' : 'toggle_off'}"
+        },
+        {
+            "response_match": "2",
+            "when_secs": -1,
+            "resource": "vcam1",
+            "method": "do_command",
+            "payload": "{'relabel' : {'<<triggered_label>>': 'Known person'}}"
+        }
+    ]
+}

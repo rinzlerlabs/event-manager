@@ -1,8 +1,10 @@
+from abc import abstractmethod
 import operator
 import re
 from datetime import datetime
 from enum import Enum
-from typing import Any, Mapping, cast
+from typing import Any, Mapping, cast, Callable
+from logging import Logger
 
 from viam.components.camera.client import Camera
 from viam.media.utils.pil import viam_to_pil_image
@@ -14,7 +16,6 @@ from viam.utils import ValueTypes
 from src.common import Resource
 
 from . import logic
-from .logger import LOGGER
 from .resourceUtils import call_method
 
 
@@ -58,9 +59,21 @@ class RuleType(str, Enum):
 
 class Rule():
     type: RuleType
+    _logger: Logger
 
-    def __init__(self, rule_type: RuleType):
+    def __init__(self, logger:Logger, rule_type: RuleType):
+        if logger is None:
+            raise ValueError("The logger cannot be None.")
+        if not isinstance(logger, Logger):
+            raise TypeError("The logger must be an instance of Logger.")
+        self._logger = logger
+        if not isinstance(rule_type, RuleType):
+            raise TypeError("The rule type must be an instance of RuleType.")
         self.type = rule_type
+
+    @abstractmethod
+    async def eval(self) -> dict[str, Any]:
+        raise NotImplementedError("The eval method must be implemented in subclasses.")
 
 class TimeRange():
     start_hour: int
@@ -84,8 +97,8 @@ class RuleDetector(Rule):
     confidence_pct: float
     inverse_pause_secs: int
 
-    def __init__(self, conf: Mapping[str, ValueTypes], resources: Mapping[str, Resource]):
-        super().__init__(RuleType.detection)
+    def __init__(self, logger:Logger, conf: Mapping[str, ValueTypes], resources: Mapping[str, Resource]):
+        super().__init__(logger, RuleType.detection)
         
         # Check if the camera is in the configuration and if it's a string
         if "camera" not in conf:
@@ -139,6 +152,29 @@ class RuleDetector(Rule):
         else:
             self.inverse_pause_secs = 0
 
+    async def eval(self) -> dict[str, Any]:
+        self._logger.debug("evaluating detector rule")
+        response:dict[str, Any] = { "triggered" : False }
+        all = await self.detector.capture_all_from_camera(self.camera_name, return_detections=True, return_image=True)
+        if all is None:
+            self._logger.error(f"capture_all_from_camera returned None from detector {self.detector.name}")
+            return response
+        if all.detections is None:
+            self._logger.debug(f"no detections returned from detector {self.detector.name}")
+            return response
+        if all.image is None:
+            self._logger.error(f"no image returned with detections from detector {self.detector.name}")
+            return response
+        d: Detection
+        for d in all.detections:
+            if (d.confidence >= self.confidence_pct) and re.search(self.class_regex, d.class_name):
+                self._logger.debug("Detection triggered")
+                response["triggered"] = True
+                response["image"] = viam_to_pil_image(all.image)
+                response["value"] = d.class_name
+                response["resource"] = self.camera_name
+        return response
+
 class RuleClassifier(Rule):
     camera: Camera
     camera_name: str
@@ -147,8 +183,8 @@ class RuleClassifier(Rule):
     confidence_pct: float
     inverse_pause_secs: int
 
-    def __init__(self, conf: Mapping[str, ValueTypes], resources: Mapping[str, Resource]):
-        super().__init__(RuleType.classification)
+    def __init__(self, logger:Logger, conf: Mapping[str, ValueTypes], resources: Mapping[str, Resource]):
+        super().__init__(logger, RuleType.classification)
         
         # Check if the camera is in the configuration and if it's a string
         if "camera" not in conf:
@@ -202,6 +238,29 @@ class RuleClassifier(Rule):
         else:
             self.inverse_pause_secs = 0
 
+    async def eval(self) -> dict[str, Any]:
+        self._logger.debug("evaluating classifier rule")
+        response:dict[str, Any] = { "triggered" : False }
+        all = await self.classifier.capture_all_from_camera(self.camera_name, return_detections=True, return_image=True)
+        if all is None:
+            self._logger.error(f"capture_all_from_camera returned None from classifier {self.classifier.name}")
+            return response
+        if all.classifications is None:
+            self._logger.debug(f"no classifications returned from classifier {self.classifier.name}")
+            return response
+        if all.image is None:
+            self._logger.error(f"no image returned with classifications from classifier {self.classifier.name}")
+            return response
+        d: Classification
+        for d in all.classifications:
+            if (d.confidence >= self.confidence_pct) and re.search(self.class_regex, d.class_name):
+                self._logger.debug("Classification triggered")
+                response["triggered"] = True
+                response["image"] = viam_to_pil_image(all.image)
+                response["value"] = d.class_name
+                response["resource"] = self.camera_name
+        return response
+
 class RuleTracker(Rule):
     camera: Camera
     camera_name: str
@@ -209,8 +268,8 @@ class RuleTracker(Rule):
     inverse_pause_secs: int
     pause_on_known_secs: int
 
-    def __init__(self, conf: Mapping[str, ValueTypes], resources: Mapping[str, Resource]):
-        super().__init__(RuleType.tracker)
+    def __init__(self, logger:Logger, conf: Mapping[str, ValueTypes], resources: Mapping[str, Resource]):
+        super().__init__(logger, RuleType.tracker)
         
         # Check if the camera is in the configuration and if it's a string
         if "camera" not in conf:
@@ -256,10 +315,55 @@ class RuleTracker(Rule):
             self.inverse_pause_secs = int(conf["inverse_pause_secs"])
         else:
             self.inverse_pause_secs = 0
-        
+
+    async def eval(self) -> dict[str, Any]:
+        self._logger.debug("evaluating tracker rule")
+        response:dict[str, Any] = { "triggered" : False }
+        all = await self.tracker.capture_all_from_camera(self.camera_name, return_classifications=False, return_detections=True, return_image=True)
+        if all is None:
+            self._logger.error(f"capture_all_from_camera returned None from tracker {self.tracker.name}")
+            return response
+        if all.detections is None:
+            self._logger.debug(f"no detections returned from tracker {self.tracker.name}")
+            return response
+        if all.image is None:
+            self._logger.error(f"no image returned with detections from tracker {self.tracker.name}")
+            return response
+        approved_status = []
+        current = await self.tracker.do_command({"list_current": True})
+        for d in all.detections:
+            authorized = False
+            # NOTE: the class name of a tracker detection that has been labeled now has a label appended to it,
+            #  so it would never ever match a key in current[].  We will therefore strip this label.
+            class_without_label = re.sub(r'\s+\(label:\s.*', '', d.class_name)
+            self._logger.debug(class_without_label + "-" + str(current["list_current"]))
+            if "list_current" not in current:
+                self._logger.error(f"Error: no list_current returned from {self.tracker.name}")
+                return response
+            if not isinstance(current["list_current"], Mapping):
+                self._logger.error(f"Error: list_current is unexpected type: {type(current['list_current'])}")
+                return response
+
+            if class_without_label in current["list_current"]:
+                k = current["list_current"][class_without_label]
+                if k["face_id_label"] or k["manual_label"] or k["re_id_label"]:
+                    authorized = True
+                    response["known_person_seen"] = True
+                approved_status.append(authorized)
+                if not authorized:
+                    im = viam_to_pil_image(all.image)
+                    response["image"] = im.crop((d.x_min, d.y_min, d.x_max, d.y_max))
+                    response["value"] = class_without_label
+                    response["resource"] = self.camera_name
+        self._logger.debug(approved_status)
+        if len(approved_status) > 0 and logic.NOR(approved_status):
+            self._logger.info(f"Tracker triggered: {response}")
+            response["triggered"] = True
+        return response
+
 class RuleCall(Rule):
-    resource: ResourceBase
-    method: str
+    resource: Resource
+    method: Callable
     payload:str = ""
     result_path: str = ""
     result_function: str = ""
@@ -267,8 +371,8 @@ class RuleCall(Rule):
     result_value: Any
     inverse_pause_secs: int
 
-    def __init__(self, conf: Mapping[str, ValueTypes], resources: Mapping[str, Resource]):
-        super().__init__(RuleType.call)
+    def __init__(self, logger:Logger, conf: Mapping[str, ValueTypes], resources: Mapping[str, Resource]):
+        super().__init__(logger, RuleType.call)
         # Check if the resource is in the configuration and if it's a string
         if "resource" not in conf:
             raise KeyError("The key 'resource' is missing from the rule configuration.")
@@ -279,7 +383,7 @@ class RuleCall(Rule):
             raise ValueError(f"Resource {conf['resource']} not found in dependencies.")
         if not isinstance(resources[conf["resource"]].resource, ResourceBase):
             raise TypeError("The resource must be of type ResourceBase.")
-        self.resource = resources[conf["resource"]].resource
+        self.resource = resources[conf["resource"]]
 
         # Check if the method is in the configuration and if it's a string
         if "method" not in conf:
@@ -287,9 +391,9 @@ class RuleCall(Rule):
         if not isinstance(conf["method"], str):
             raise TypeError("The value for 'method' must be a string.")
         # Check if the resource has a method with the given name
-        if not hasattr(self.resource, conf["method"]):
+        if not hasattr(self.resource.resource, conf["method"]):
             raise ValueError(f"Method {conf['method']} not found in resource {conf['resource']}.")
-        self.method = str(conf["method"])
+        method_name = str(conf["method"])
         
         # Check if the payload is a string if it's in the configuration
         if "payload" in conf:
@@ -331,10 +435,47 @@ class RuleCall(Rule):
             raise ValueError("The value for 'inverse_pause_secs' must be a positive number.")
         self.inverse_pause_secs = int(conf["inverse_pause_secs"])
 
+        if not hasattr(self.resource.resource, method_name):
+            raise AttributeError(f"The method '{method_name}' does not exist on the resource {self.resource.resource.name}.")
+        
+        method = getattr(self.resource.resource, method_name)
+        if not method:
+            raise ValueError(f"The method '{method_name}' on the resource {self.resource.resource.name} is None.")
+        if not callable(method):
+            raise ValueError(f"The method '{method_name}' is not callable on the resource {self.resource.resource.name}.")
+        self.method = method
+
+    async def eval(self) -> dict[str, Any]:
+        self._logger.debug("evaluating call rule")
+        response:dict[str, Any] = { "triggered" : False }
+        try:
+            call_res = await call_method(self.method, self.payload)
+            if self.result_path:
+                call_res = get_value_by_dot_notation(call_res, self.result_path)
+                if call_res == None:
+                    self._logger.error(f"data not found in path {self.result_path}")
+                    return response
+
+            self._logger.debug(call_res)
+            if self.result_function:
+                match self.result_function:
+                    case "len":
+                        call_res = len(call_res)
+                    case "any":
+                        call_res = any(call_res)          
+
+            response["triggered"] = self.result_operator.invoke(call_res, self.result_value)
+            response["value"] = call_res
+            response["resource"] = self.resource
+            self._logger.debug(f"call rule eval to {response['triggered']} call_res {call_res} result_val {self.result_value}")
+        except Exception as e:
+            self._logger.error(f"Error in 'call' type rule, rule not properly evaluated: {e}")
+        return response
+
 class RuleTime(Rule):
     ranges: list[TimeRange]
-    def __init__(self, conf: Mapping[str, ValueTypes]):
-        super().__init__(RuleType.time)
+    def __init__(self, logger:Logger, conf: Mapping[str, ValueTypes]):
+        super().__init__(logger, RuleType.time)
         if "ranges" in conf:
             if isinstance(conf["ranges"], list):
                 self.ranges = []
@@ -361,116 +502,15 @@ class RuleTime(Rule):
             self.ranges = [TimeRange(int(conf["start_hour"]), int(conf["end_hour"]))]
         else:
             raise KeyError("The configuration for a time rule must include 'ranges' or 'start_hour' and 'end_hour'.")
-
-async def eval_rule(rule:RuleTime|RuleDetector|RuleClassifier|RuleTracker|RuleCall) -> dict[str, Any]:
-    response:dict[str, Any] = { "triggered" : False }
-    match rule.type:
-        case RuleType.time:
-            rule = cast(RuleTime, rule)
-            curr_time = datetime.now()
-            for r in rule.ranges:
-                if (curr_time.hour >= r.start_hour) and (curr_time.hour < r.end_hour):
-                    LOGGER.debug("Time triggered")
-                    response["triggered"] = True   
-        case RuleType.detection:
-            rule = cast(RuleDetector, rule)
-            all = await rule.detector.capture_all_from_camera(rule.camera_name, return_detections=True, return_image=True)
-            if all is None or all.detections is None or all.image is None:
-                LOGGER.error(f"Error: no image returned from {rule.camera_name}")
-                return response
-            d: Detection
-            for d in all.detections:
-                if (d.confidence >= rule.confidence_pct) and re.search(rule.class_regex, d.class_name):
-                    LOGGER.debug("Detection triggered")
-                    response["triggered"] = True
-                    response["image"] = viam_to_pil_image(all.image)
-                    response["value"] = d.class_name
-                    response["resource"] = rule.camera_name
-        case RuleType.classification:
-            rule = cast(RuleClassifier, rule)
-            all = await rule.classifier.capture_all_from_camera(rule.camera_name, return_classifications=True, return_image=True)
-
-            if all is None or all.classifications is None or all.image is None:
-                LOGGER.error(f"Error: no image returned from {rule.camera_name}")
-                return response
-            
-            c: Classification
-            for c in all.classifications:
-                if (c.confidence >= rule.confidence_pct) and re.search(rule.class_regex, c.class_name):
-                    LOGGER.debug("Classification triggered")
-                    response["triggered"] = True
-                    response["image"] = viam_to_pil_image(all.image)
-                    response["value"] = c.class_name
-                    response["resource"] = rule.camera
-        case RuleType.tracker:
-            rule = cast(RuleTracker, rule)
-            # NOTE: we call capture_all_from_camera() in order to get an image and coordinates in case there is an actionable detection
-            all = await rule.tracker.capture_all_from_camera(rule.camera_name, return_classifications=False, return_detections=True, return_image=True)
-
-            if all is None or all.detections is None or all.image is None:
-                LOGGER.error(f"Error: no image returned from {rule.camera}")
-                return response
-            
-            approved_status = []
-
-            current = await rule.tracker.do_command({"list_current": True})
-            
-            for d in all.detections:
-                authorized = False
-
-                # NOTE: the class name of a tracker detection that has been labeled now has a label appended to it,
-                #  so it would never ever match a key in current[].  We will therefore strip this label.
-                class_without_label = re.sub(r'\s+\(label:\s.*', '', d.class_name)
-                LOGGER.debug(class_without_label + "-" + str(current["list_current"]))
-                if "list_current" not in current:
-                    LOGGER.error(f"Error: no list_current returned from {rule.tracker}")
-                    return response
-                if not isinstance(current["list_current"], Mapping):
-                    LOGGER.error(f"Error: list_current is unexpected type: {type(current['list_current'])}")
-                    return response
-
-                if class_without_label in current["list_current"]:
-                    k = current["list_current"][class_without_label]
-                    if k["face_id_label"] or k["manual_label"] or k["re_id_label"]:
-                        authorized = True
-                        response["known_person_seen"] = True
-                    approved_status.append(authorized)
-                    if not authorized:
-                        im = viam_to_pil_image(all.image)
-                        response["image"] = im.crop((d.x_min, d.y_min, d.x_max, d.y_max))
-                        response["value"] = class_without_label
-                        response["resource"] = rule.camera
-            LOGGER.debug(approved_status)
-            if len(approved_status) > 0 and logic.NOR(approved_status):
-                LOGGER.info("Tracker triggered")
-                LOGGER.info(response)
-
+        
+    async def eval(self) -> dict[str, Any]:
+        response:dict[str, Any] = { "triggered" : False }
+        curr_time = datetime.now()
+        for r in self.ranges:
+            if (curr_time.hour >= r.start_hour) and (curr_time.hour < r.end_hour):
+                self._logger.debug("Time triggered")
                 response["triggered"] = True
-        case RuleType.call:
-            rule = cast(RuleCall, rule)
-            try:
-                call_res = await call_method(rule.resource, rule.method, rule.payload, None)
-                if rule.result_path:
-                    call_res = get_value_by_dot_notation(call_res, rule.result_path)
-                    if call_res == None:
-                        LOGGER.error(f"data not found in path {rule.result_path}")
-                        return response
-
-                LOGGER.debug(call_res)
-                if rule.result_function:
-                    match rule.result_function:
-                        case "len":
-                            call_res = len(call_res)
-                        case "any":
-                            call_res = any(call_res)          
-
-                response["triggered"] = rule.result_operator.invoke(call_res, rule.result_value)
-                response["value"] = call_res
-                response["resource"] = rule.resource
-                LOGGER.debug(f"call rule eval to {response['triggered']} call_res {call_res} result_val {rule.result_value}")
-            except Exception as e:
-                LOGGER.error(f"Error in 'call' type rule, rule not properly evaluated: {e}")
-    return response
+        return response
 
 def logical_trigger(logic_type, list):
     logic_function = getattr(logic, logic_type)

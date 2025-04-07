@@ -26,6 +26,9 @@ from viam.services.slam import SLAM
 from viam.services.vision import VisionClient
 
 
+MODE_INACTIVE = "inactive"
+MODE_ACTIVE = "active"
+
 class ResourceType(str, Enum):
     component = "component"
     service = "service"
@@ -82,11 +85,6 @@ class Resource:
             subtype=self.sub_type,
             resource=self.resource
         )
-
-class Modes(str,Enum):
-    active = "active"
-    inactive = "inactive"
-    none = "none"
 
 def get_dependency_resource_name(type: str, subtype: str, name: str) -> ResourceName:
     if type == ResourceType.component:

@@ -47,4 +47,4 @@ def mock_resource(resource_name: str, resource_type:ResourceType=ResourceType.co
     resource.do_command = AsyncMock(return_value = {}, side_effect=exception)
     resource.get_readings = AsyncMock(return_value = {}, side_effect=exception)
     
-    return Resource(resource_type, resource_sub_type, resource)
+    return Resource(resource_name, resource_type, resource_sub_type, resource)

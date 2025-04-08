@@ -10,7 +10,7 @@ from viam.utils import struct_to_dict
 
 from .common import (Resource, ResourceSubType, ResourceType,
                      get_dependency_resource_name)
-from .events import Event
+from .event import Event
 
 
 class ModeOverride:
@@ -129,6 +129,7 @@ class Config:
                 raise ValueError(f"Dependency '{depName}' cannot be None.")
             
             resources[resource_id] = Resource(
+                name=resource_id,
                 type=ResourceType(resource["type"]),
                 subtype=ResourceSubType(resource["subtype"]),
                 resource=dependencies[depName]
@@ -141,14 +142,14 @@ class Config:
             sms_module_name = get_dependency_resource_name(ResourceType.service, ResourceSubType.generic, sms_module)
             if sms_module_name not in dependencies:
                 raise ValueError(f"SMS module '{sms_module_name}' not found in dependencies.")
-            resources["sms_module"] = Resource(ResourceType.component, ResourceSubType.generic, dependencies[sms_module_name])
+            resources["sms_module"] = Resource("sms_module", ResourceType.component, ResourceSubType.generic, dependencies[sms_module_name])
         email_module = config.attributes.fields.get("email_module", None)
         if email_module is not None and email_module.string_value != "":
             email_module = email_module.string_value
             email_module_name = get_dependency_resource_name(ResourceType.service, ResourceSubType.generic, email_module)
             if email_module_name not in dependencies:
                 raise ValueError(f"Email module '{email_module_name}' not found in dependencies.")
-            resources["email_module"] = Resource(ResourceType.component, ResourceSubType.generic, dependencies[email_module_name])
+            resources["email_module"] = Resource("email_module", ResourceType.component, ResourceSubType.generic, dependencies[email_module_name])
         
         return resources
 

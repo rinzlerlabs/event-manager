@@ -3,25 +3,7 @@ from typing import Any, Callable
 
 from viam.resource.base import ResourceBase
 
-async def call_method(method: Callable, payload:str, event_name:str|None=None, trigger_label:str|None=None, trigger_source:str|None=None) -> Any:
-    """
-    Calls a method with the given payload.
-    Args:
-        method (Callable): The method to call.
-        payload (str): The payload to send to the method.
-        event_name (str): The name of the event that triggered the action.
-        trigger_label (str): The label of the trigger.
-        trigger_source (str): The source of the trigger.
-    Returns:
-        The result of the method call.
-    Raises:
-        ValueError: If the method is not found or is not callable.
-    """
-    if not method:
-        raise ValueError(f"Method {method} not found")
-    if not callable(method):
-        raise ValueError(f"Method {method} is not callable")
-
+def prep_payload(payload: str, event_name: str|None=None, trigger_label: str|None=None, trigger_source: str|None=None) -> Any|None:
     if payload:
         # we don't want to alter action.payload directly as it will be used as a template repeatedly
         payload_copy = payload
@@ -34,7 +16,5 @@ async def call_method(method: Callable, payload:str, event_name:str|None=None, t
         if event_name is not None:
             payload_copy = payload_copy.replace('<<event_name>>', event_name)
         payload_copy = payload_copy.replace("'", "\"")
-
-        return await method(json.loads(payload_copy))
-    else:
-        return await method()
+        return json.loads(payload_copy)
+    return None

@@ -162,3 +162,5 @@ viam-env
 .installed
 test.py
 module.tar.gz
+
+*.lcov

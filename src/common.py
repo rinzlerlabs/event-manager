@@ -62,11 +62,12 @@ class ResourceSubType(str, Enum):
     vision = "vision"
 
 class Resource:
+    name: str
     type: ResourceType
     sub_type: ResourceSubType
     resource: ResourceBase
 
-    def __init__(self, type: ResourceType, subtype: ResourceSubType, resource: ResourceBase):
+    def __init__(self, name:str, type: ResourceType, subtype: ResourceSubType, resource: ResourceBase):
         if not isinstance(type, ResourceType):
             raise TypeError("The type must be an instance of ResourceType.")
         if not isinstance(subtype, ResourceSubType):
@@ -75,12 +76,14 @@ class Resource:
             raise TypeError("The resource must be an instance of ResourceBase.")
         if not resource:
             raise ValueError("The resource cannot be None.")
+        self.name = name
         self.type = type
         self.sub_type = subtype
         self.resource = resource
 
     def copy(self):
         return Resource(
+            name=self.name,
             type=self.type,
             subtype=self.sub_type,
             resource=self.resource
@@ -178,6 +181,6 @@ def get_resource_from_resource_map_by_name(name:str, dependencies:Mapping[str, R
     if not dependencies:
         raise ValueError("The dependencies cannot be empty.")
     for depName, dep in dependencies.items():
-        if dep.resource.name == name:
+        if depName == name:
             return dep
     raise ValueError(f"Dependency with name {name} not found in dependencies.")

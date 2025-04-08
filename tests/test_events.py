@@ -10,7 +10,7 @@ from src.actions import Action
 from src.common import MODE_INACTIVE, Resource, ResourceType, ResourceSubType
 from viam.resource.types import resource_name_from_string
 
-from src.events import Event, EventState, EventConfigParser
+from src.event import Event, EventState, EventConfigParser
 from helpers import mock_resource
 from src.notifications import SmsNotifier
 from src.rules import RuleLogicType, RuleTime
@@ -80,6 +80,9 @@ def test_event_config_parsing_state():
 
     del config["state"]
     assert EventConfigParser.parse_state(config) == EventState.paused
+
+    config["state"] = "setup"
+    assert EventConfigParser.parse_state(config) == EventState.setup
 
 def test_event_config_parsing_capture_video():
     config = read_config('tests/events/sample_config.json')
@@ -225,6 +228,10 @@ def test_event_config_parsing_modes():
     with pytest.raises(TypeError, match="The value for 'modes' must be a list."):
         EventConfigParser.parse_modes(config)
 
+    config["modes"] = ["mode1", 12]
+    with pytest.raises(TypeError, match="Each mode in 'modes' must be a string."):
+        EventConfigParser.parse_modes(config)
+
     config["modes"] = ["mode1", "mode2"]
     assert EventConfigParser.parse_modes(config) == ["mode1", "mode2"]
 
@@ -242,6 +249,10 @@ def test_event_config_parsing_rule_logic_type():
 
     config["rule_logic_type"] = None
     with pytest.raises(TypeError, match="The value for 'rule_logic_type' must be a string."):
+        EventConfigParser.parse_rule_logic_type(config)
+
+    config["rule_logic_type"] = "bob"
+    with pytest.raises(ValueError, match="Invalid value for 'rule_logic_type': bob"):
         EventConfigParser.parse_rule_logic_type(config)
 
     del config["rule_logic_type"]
@@ -266,6 +277,22 @@ def test_event_config_parsing_rules():
     assert len(rules) == 1
     assert isinstance(rules[0], RuleTime)
 
+    del config["rules"]
+    with pytest.raises(KeyError, match="The key 'rules' is missing from the event configuration."):
+        EventConfigParser.parse_rules(logger, config, {})
+
+    config["rules"] = ["bob"]
+    with pytest.raises(TypeError, match="Each rule in 'rules' must be a dictionary."):
+        EventConfigParser.parse_rules(logger, config, {})
+
+    config["rules"] = [{}]
+    with pytest.raises(KeyError, match="The key 'type' is missing from the rule configuration."):
+        EventConfigParser.parse_rules(logger, config, {})
+
+    config["rules"] = [{"type": "bob", "start_hour": 1, "end_hour": 2}]
+    with pytest.raises(ValueError, match="Invalid rule type: bob"):
+        EventConfigParser.parse_rules(logger, config, {})
+
 def test_event_config_parse_notifications():
     logger = logging.getLogger(__name__)
     config = read_config('tests/events/sample_config.json')
@@ -286,6 +313,18 @@ def test_event_config_parse_notifications():
     assert notifiers is not None
     assert len(notifiers) == 1
     assert isinstance(notifiers[0], SmsNotifier)
+
+    del config["notifications"]
+    with pytest.raises(KeyError, match="The key 'notifications' is missing from the event configuration."):
+        EventConfigParser.parse_notifiers(logger, config, {})
+
+    config["notifications"] = ["bob"]
+    with pytest.raises(TypeError, match="Each notification in 'notifications' must be a dictionary."):
+        EventConfigParser.parse_notifiers(logger, config, {})
+    
+    config["notifications"] = [{}]
+    with pytest.raises(KeyError, match="The key 'type' is missing from the notification configuration."):
+        EventConfigParser.parse_notifiers(logger, config, {})
 
 def test_event_config_parsing_actions():
     logger = logging.getLogger(__name__)
@@ -309,6 +348,10 @@ def test_event_config_parsing_actions():
     assert isinstance(actions[0], Action)
     assert actions[0].resource.resource == dependencies["kasa_plug_1"].resource
 
+    config["actions"] = ["bob"]
+    with pytest.raises(TypeError, match="Each action in 'actions' must be a dictionary."):
+        EventConfigParser.parse_actions(logger, config, {})
+
 def test_event_config_parsing_trigger_sequence_count():
     logger = logging.getLogger(__name__)
     config = read_config('tests/events/sample_config.json')
@@ -319,7 +362,7 @@ def test_event_config_parsing_trigger_sequence_count():
     config["trigger_sequence_count"] = "12"
     assert EventConfigParser.parse_trigger_sequence_count(config) == 12
 
-    config["trigger_sequence_count"] = 12.5
+    config["trigger_sequence_count"] = 12.5 
     assert EventConfigParser.parse_trigger_sequence_count(config) == 12
 
     config["trigger_sequence_count"] = None
@@ -347,3 +390,31 @@ def test_event_config_parsing_invalid_resource():
     config["video_capture_resource"] = "non_existent_resource"
     with pytest.raises(ValueError):
         Event(logger, config, resources)
+
+def test_event_flip_action_status():
+    logger = logging.getLogger(__name__)
+    config = read_config('tests/events/sample_config.json')
+    resources:Mapping[str, Resource] = {
+        "kasa_plug_1": mock_resource("kasa_plug_1", resource_type=ResourceType.component, resource_sub_type=ResourceSubType.generic),
+        "kasa_plug_2": mock_resource("kasa_plug_2", resource_type=ResourceType.component, resource_sub_type=ResourceSubType.generic),
+        "cam1": mock_resource("cam1", resource_type=ResourceType.component, resource_sub_type=ResourceSubType.camera),
+        "vcam1": mock_resource("vcam1", resource_type=ResourceType.component, resource_sub_type=ResourceSubType.camera),
+        "tracker1": mock_resource("tracker1", resource_type=ResourceType.service, resource_sub_type=ResourceSubType.vision),
+        "person_detector": mock_resource("person_detector", resource_type=ResourceType.service, resource_sub_type=ResourceSubType.vision),
+        "stuff_sensor": mock_resource("stuff_sensor", resource_type=ResourceType.component, resource_sub_type=ResourceSubType.sensor),
+        "sms_module": mock_resource("sms", resource_type=ResourceType.service, resource_sub_type=ResourceSubType.generic),
+        "email_module": mock_resource("email", resource_type=ResourceType.service, resource_sub_type=ResourceSubType.generic),
+        "video_capture": mock_resource("video_capture", resource_type=ResourceType.component, resource_sub_type=ResourceSubType.generic)
+    }
+    event = Event(logger, config, resources)
+    assert event is not None
+    assert isinstance(event, Event)
+    assert event.actions is not None
+    assert len(event.actions) == 3
+    assert event.actions[0].taken == False
+    assert event.actions[1].taken == False
+    assert event.actions[2].taken == False
+    event.flip_action_status(True)
+    assert event.actions[0].taken == True
+    assert event.actions[1].taken == True
+    assert event.actions[2].taken == True

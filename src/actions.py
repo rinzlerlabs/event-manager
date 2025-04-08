@@ -7,7 +7,7 @@ import time
 from viam.utils import ValueTypes
 
 from .common import Resource, get_resource_from_resource_map_by_name
-from .resourceUtils import call_method
+from .resourceUtils import prep_payload
 
 # This implementation is currently wrong, because it doesn't reset after the action is taken.
 # We need to produce an action based on a config, action it, then dispose of it or reset it.
@@ -87,7 +87,11 @@ class Action():
     
     async def do_action(self, event_name:str, trigger_label:str, trigger_source:str) -> None:
         try:
-            await call_method(self.method, self.payload, event_name, trigger_label, trigger_source)
+            payload = prep_payload(self.payload, event_name, trigger_label, trigger_source)
+            if payload is not None:
+                await self.method(payload)
+            else:
+                await self.method()
         except Exception as e:
             self.__logger.error(f"Error calling method {self.method_name} on resource {self.resource.resource.name}: {e}")
             raise e

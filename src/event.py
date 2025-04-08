@@ -140,7 +140,7 @@ class EventConfigParser:
             raise TypeError("The value for 'notifications' must be a list.")
         notifiers = []
         for notification_config in config["notifications"]:
-            if not isinstance(notification_config, dict):
+            if not isinstance(notification_config, Mapping):
                 raise TypeError("Each notification in 'notifications' must be a dictionary.")
             if "type" not in notification_config:
                 raise KeyError("The key 'type' is missing from the notification configuration.")
@@ -153,7 +153,7 @@ class EventConfigParser:
             if not isinstance(config["actions"], list):
                 raise TypeError("The value for 'actions' must be a list.")
             for action in config["actions"]:
-                if not isinstance(action, dict):
+                if not isinstance(action, Mapping):
                     raise TypeError("Each action in 'actions' must be a dictionary.")
                 actions.append(Action(logger, action, dependencies))
         return actions

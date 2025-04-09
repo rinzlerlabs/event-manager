@@ -6,3 +6,4 @@ pymongo
 pytest
 pytest-asyncio
 phonenumbers~=9.0.2
+python-dateutil~=2.9.0

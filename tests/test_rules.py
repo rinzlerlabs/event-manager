@@ -757,4 +757,4 @@ async def test_rule_call_eval():
     assert mock_do_command.call_args == []
 
 def test_rule_time_parse_config():
-    
+    pass

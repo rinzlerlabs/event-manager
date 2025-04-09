@@ -1,7 +1,8 @@
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from typing import List, Mapping
 from logging import Logger
+from dateutil import parser as dateutil
 
 from viam.proto.app.robot import ComponentConfig
 from viam.proto.common import ResourceName
@@ -15,23 +16,32 @@ from .event import Event
 
 class ModeOverride:
     mode: str
-    until: float
+    until: datetime
 
     def __init__(self, config: ComponentConfig):
-        mode = config.attributes.fields.get("mode", None)
+        mode_override_config = config.attributes.fields.get("mode_override", None)
+        if mode_override_config is None:
+            return None
+        cfg = mode_override_config.struct_value
+        if not cfg:
+            raise ValueError("The mode override configuration cannot be empty.")
+        mode = cfg.fields.get("mode", None)
         if mode is None:
             raise ValueError("The value for 'mode' cannot be None.")
         self.mode = mode.string_value
         
-        until = config.attributes.fields.get("until", None)
+        until = cfg.fields.get("until", None)
         if until is None:
             raise ValueError("The value for 'until' cannot be None.")
         until_str = until.string_value
-        self.until = iso8601_to_timestamp(until_str)
+        until = dateutil.isoparse(until_str)
+        if until.tzinfo is None:
+            raise ValueError("The value for 'until' must be a timezone-aware datetime.")
+        self.until = until
 
 class Config:
     __mode: str
-    __mode_override: str|None = None
+    __mode_override: ModeOverride|None = None
     events: List[Event]
     sms_module: ResourceBase|None = None
     email_module: ResourceBase|None = None
@@ -46,10 +56,11 @@ class Config:
             raise TypeError("The logger must be an instance of Logger.")
         self.logger = logger
 
+        if config is None or not config:
+            raise ValueError("The configuration cannot be empty.")
+
         if not isinstance(config, ComponentConfig):
             raise TypeError("The configuration must be a dictionary.")
-        if not config:
-            raise ValueError("The configuration cannot be empty.")
         
         # First populate the simple fields
         app_api_key = config.attributes.fields.get("app_api_key", None)
@@ -100,6 +111,7 @@ class Config:
             raise ValueError("The value for 'mode' cannot be None.")
         mode_str = mode_val.string_value
         self.mode = mode_str
+        self._Config__mode_override = ModeOverride(config)
     
     def get_resources(self, config: ComponentConfig, dependencies: Mapping[ResourceName, ResourceBase]) -> Mapping[str, Resource]:
         if "resources" not in config.attributes.fields:
@@ -136,20 +148,20 @@ class Config:
             )
         
         # Now add the SMS and Email modules
-        sms_module = config.attributes.fields.get("sms_module", None)
-        if sms_module is not None and sms_module.string_value != "":
-            sms_module = sms_module.string_value
-            sms_module_name = get_dependency_resource_name(ResourceType.service, ResourceSubType.generic, sms_module)
-            if sms_module_name not in dependencies:
+        sms_module_name = config.attributes.fields.get("sms_module", None)
+        if sms_module_name is not None and sms_module_name.string_value != "":
+            sms_module_name = sms_module_name.string_value
+            sms_module_dependency_name = get_dependency_resource_name(ResourceType.service, ResourceSubType.generic, sms_module_name)
+            if sms_module_dependency_name not in dependencies:
                 raise ValueError(f"SMS module '{sms_module_name}' not found in dependencies.")
-            resources["sms_module"] = Resource("sms_module", ResourceType.component, ResourceSubType.generic, dependencies[sms_module_name])
-        email_module = config.attributes.fields.get("email_module", None)
-        if email_module is not None and email_module.string_value != "":
-            email_module = email_module.string_value
-            email_module_name = get_dependency_resource_name(ResourceType.service, ResourceSubType.generic, email_module)
-            if email_module_name not in dependencies:
+            resources["sms_module"] = Resource("sms_module", ResourceType.component, ResourceSubType.generic, dependencies[sms_module_dependency_name])
+        email_module_name = config.attributes.fields.get("email_module", None)
+        if email_module_name is not None and email_module_name.string_value != "":
+            email_module_name = email_module_name.string_value
+            email_module_dependency_name = get_dependency_resource_name(ResourceType.service, ResourceSubType.generic, email_module_name)
+            if email_module_dependency_name not in dependencies:
                 raise ValueError(f"Email module '{email_module_name}' not found in dependencies.")
-            resources["email_module"] = Resource("email_module", ResourceType.component, ResourceSubType.generic, dependencies[email_module_name])
+            resources["email_module"] = Resource("email_module", ResourceType.component, ResourceSubType.generic, dependencies[email_module_dependency_name])
         
         return resources
 
@@ -159,7 +171,7 @@ class Config:
             return self.__mode
         if not isinstance(self.__mode_override, ModeOverride):
             raise TypeError("The ModeOverride must be an instance of ModeOverride.")
-        if self.__mode_override.until > datetime.now().timestamp():
+        if self.__mode_override.until > datetime.now().astimezone():
             return self.__mode_override.mode
         self.__mode_override = None # If the override has expired, remove it so we don't check it every time
         return self.__mode
@@ -169,33 +181,3 @@ class Config:
         if not isinstance(mode, str):
             raise TypeError("The mode must be an instance of string.")
         self.__mode = mode
-
-def iso8601_to_timestamp(iso8601_string):
-    # Regular expression to match ISO8601 format
-    iso8601_regex = r"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$"
-    match = re.match(iso8601_regex, iso8601_string)
-    
-    if not match:
-        raise ValueError("Invalid ISO8601 format")
-
-    year, month, day, hour, minute, second = map(int, match.groups()[:6])
-    microsecond = int(float(match.group(7) or '0') * 1000000)
-    tz_string = match.group(8)
-
-    if tz_string == 'Z':
-        tzinfo = timezone.utc
-    elif tz_string:
-        # Handle timezone offset
-        tz_hours, tz_minutes = map(int, tz_string.replace(':', '')[:-2].split(':'))
-        tzinfo = timezone(timedelta(hours=tz_hours, minutes=tz_minutes))
-    else:
-        tzinfo = None  # Naive datetime
-
-    dt = datetime(year, month, day, hour, minute, second, microsecond, tzinfo=tzinfo)
-    
-    # Convert to UTC if it's not already
-    if dt.tzinfo:
-        dt = dt.astimezone(timezone.utc)
-    
-    # Return Unix timestamp
-    return dt.timestamp()
